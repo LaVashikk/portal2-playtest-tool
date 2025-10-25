@@ -1,0 +1,11 @@
+[package]
+name = "overlay-ui"
+publish.workspace = true
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+egui.workspace = true
+windows.workspace = true
+engine-api.workspace = true
+log = "0.4.22"
