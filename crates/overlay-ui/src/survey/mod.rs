@@ -17,14 +17,14 @@ pub use bug_report::BugReportWin;
 
 const SERVER_URL: &str = "http://lavashik.dev:3001/submit";
 // Global, write-once container for the moderator key, loaded from config.json.
-pub static GLOBAL_MODERATOR_KEY: OnceLock<String> = OnceLock::new();
+pub static GLOBAL_MOD_KEY: OnceLock<String> = OnceLock::new();
 // Global, thread-safe, mutable string to hold the current status of the network request.
 pub static REQUEST_STATUS: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::from("idle")));
 
 /// Helper struct to deserialize the client configuration.
 #[derive(serde::Deserialize)]
 pub struct ClientConfig {
-    pub moderator_key: String,
+    pub mod_key: String,
 }
 
 /// Sets the global request status in a thread-safe manner.
@@ -204,7 +204,7 @@ impl WidgetForm {
 
         // --- Asynchronous Network Submission ---
         let url = SERVER_URL.to_string();
-        let key = GLOBAL_MODERATOR_KEY.get().cloned().unwrap_or_default();
+        let key = GLOBAL_MOD_KEY.get().cloned().unwrap_or_default();
         let body_for_thread = json_data;
 
         if key.is_empty() {

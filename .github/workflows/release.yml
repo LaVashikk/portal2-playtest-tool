@@ -1,0 +1,76 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-and-release:
+    name: Build and Release d3d9.dll
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          target: i686-pc-windows-msvc
+
+      - name: Build the DLL
+        run: cargo build --release --package d3d9-proxy --target i686-pc-windows-msvc
+
+      - name: Prepare artifact structure
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "staging/Portal 2/bin" -Force
+          Copy-Item -Path "target/i686-pc-windows-msvc/release/d3d9.dll" -Destination "staging/Portal 2/bin/d3d9.dll"
+          Copy-Item -Path "SURVEY" -Destination "staging/Portal 2/" -Recurse
+
+      - name: Create Zip Archive
+        shell: pwsh
+        run: Compress-Archive -Path "staging/Portal 2/*" -DestinationPath "d3d9-proxy-release.zip"
+
+      - name: Generate Checksum
+        shell: pwsh
+        run: (Get-FileHash d3d9-proxy-release.zip -Algorithm SHA256).Hash.ToLower() | Set-Content d3d9-proxy-release.zip.sha256
+      
+      - name: Extract Release Notes
+        id: get_releasenotes
+        shell: pwsh
+        run: |
+          $notes = "No release notes for this version."
+          $changelogPath = "CHANGELOG.md"
+          if (Test-Path $changelogPath) {
+              $version = "${{ github.ref_name }}".Substring(1)
+              $changelogContent = Get-Content -Path $changelogPath -Raw
+              $regex = "(?sm)## \[$version\].*?(?=\n## \[|$)"
+              $match = [regex]::Match($changelogContent, $regex)
+              if ($match.Success) {
+                  $notes = $match.Value
+              }
+          }
+          
+          $body = "## Downloads`n`n"
+          $body += "| File | Checksum |`n"
+          $body += "|---|---|`n"
+          $body += "| `d3d9-proxy-release.zip` | `SHA256` |`n`n"
+          $body += "## Release Notes`n`n"
+          $body += $notes
+          
+          $body | Out-File -FilePath "releasenotes.md" -Encoding utf8
+          
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            d3d9-proxy-release.zip
+            d3d9-proxy-release.zip.sha256
+          name: "Release ${{ github.ref_name }}"
+          body_path: "releasenotes.md"
+          prerelease: ${{ contains(github.ref_name, '-') }}

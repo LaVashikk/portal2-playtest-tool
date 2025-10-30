@@ -5,6 +5,7 @@ use engine_api::Engine;
 #[derive(Debug, Default, Clone)]
 pub struct SharedState {
     pub is_overlay_focused: bool,
+    pub surver_is_opened: bool,
 }
 
 /// Trait that every window must implement.
@@ -44,14 +45,14 @@ pub fn regist_windows() -> Vec<Box<dyn Window + Send>> {
     let key = std::fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str::<survey::ClientConfig>(&s).ok())
-        .map(|c| c.moderator_key)
+        .map(|c| c.mod_key)
         .unwrap_or_else(|| {
             log::error!("Could not read or parse SURVEY/config.json. Mod-key will be empty.");
             String::new()
         });
 
     // This will only succeed on the first call.
-    let _ = survey::GLOBAL_MODERATOR_KEY.set(key);
+    let _ = survey::GLOBAL_MOD_KEY.set(key);
     survey::set_request_status("idle");
 
     vec![
@@ -65,6 +66,7 @@ pub fn regist_windows() -> Vec<Box<dyn Window + Send>> {
 // ---------------------- \\
 //      YOUR WINDOWS      \\
 // ---------------------- \\
+mod survey;
 
 #[derive(Debug, Default)]
 pub struct OverlayText;
@@ -75,12 +77,27 @@ impl Window for OverlayText {
 
     fn draw(&mut self, ctx: &Context, _shared_state: &mut SharedState, _engine: &Engine) {
         let screen_rect = ctx.screen_rect();
+        // Get the current network status from the survey module.
+        let status = survey::get_request_status();
+
+        let debug_text = format!(
+            "DEBUG INFO:\n----------------------\n\
+                is_focused: {}\n\
+                wants_keyboard: {}\n\
+                wants_pointer: {}\n\
+                request_status: {}",
+            _shared_state.is_overlay_focused,
+            ctx.wants_keyboard_input(),
+            ctx.wants_pointer_input(),
+            status
+        );
+
         ctx.debug_painter().text(
             egui::pos2(screen_rect.left() + 10.0, screen_rect.bottom() - 10.0),
             egui::Align2::LEFT_BOTTOM,
-            "IN-Game Custom Overlay",
+            debug_text,
             egui::FontId::proportional(20.0),
-            egui::Color32::ORANGE,
+            egui::Color32::GRAY,
         );
     }
 }
