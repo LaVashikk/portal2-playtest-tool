@@ -9,3 +9,4 @@ egui.workspace = true
 windows.workspace = true
 engine-api.workspace = true
 log = "0.4.22"
+ureq = { version = "2.9.6", features = ["json"] }
