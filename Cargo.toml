@@ -40,3 +40,8 @@ features = [
     "Win32_UI_HiDpi",
     "Win32_System_ProcessStatus",
 ]
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
