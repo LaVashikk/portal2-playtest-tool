@@ -5,6 +5,7 @@ members = [
     "crates/engine-api",
     "crates/egui-d3d9",
     "crates/overlay-ui",
+    "crates/feedback-server",
 ]
 default-members = ["crates/d3d9-proxy"]
 
