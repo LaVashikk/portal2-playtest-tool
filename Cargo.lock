@@ -1322,6 +1322,8 @@ dependencies = [
  "egui",
  "engine-api",
  "log",
+ "serde",
+ "serde_json",
  "ureq",
  "windows",
 ]

@@ -1,0 +1,47 @@
+{
+  "title": "Feedback & Bug Report",
+  "widgets": [
+    {
+      "type": "RadioChoices",
+      "text": "Type of Feedback:",
+      "choices": [
+        "Bug (Something is broken)",
+        "Glitch / Oversight (Minor issue)",
+        "Suggestion (Improvement idea)",
+        "General Opinion / Feedback"
+      ],
+      "required": true
+    },
+    {
+      "type": "RadioChoices",
+      "text": "Category:",
+      "choices": [
+        "Gameplay / Mechanics",
+        "Level Design (Stuck spot, Out of bounds, Exploits)",
+        "Visuals / Models / Textures",
+        "Audio / Sound",
+        "UI / HUD",
+        "Text / Typos",
+        "Other"
+      ],
+      "required": true
+    },
+    {
+      "type": "RadioChoices",
+      "text": "Impact on Gameplay:",
+      "choices": [
+        "Blocker (Cannot progress)",
+        "Major (Significantly hinders gameplay)",
+        "Minor (Noticeable, but playable)",
+        "Cosmetic (Does not affect gameplay)",
+        "N/A (For suggestions)"
+      ],
+      "required": true
+    },
+    {
+      "type": "Essay",
+      "text": "Details (What happened? Steps to reproduce? What did you expect?):",
+      "required": true
+    }
+  ]
+}
