@@ -40,14 +40,23 @@ jobs:
         shell: pwsh
         run: (Get-FileHash d3d9-proxy-release.zip -Algorithm SHA256).Hash.ToLower() | Set-Content d3d9-proxy-release.zip.sha256
       
-      - name: Extract Release Notes
+      - name: Extract Release Notes and Prepare Body
         id: get_releasenotes
         shell: pwsh
         run: |
-          $notes = "No release notes for this version."
+          $repo = "${{ github.repository }}"
+          $tag = "${{ github.ref_name }}"
+          $baseUrl = "https://github.com/$repo/releases/download/$tag"
+          $zipFile = "d3d9-proxy-release.zip"
+          $checksumFile = "$zipFile.sha256"
+          $zipLink = "[$zipFile]($baseUrl/$zipFile)"
+          $checksumLink = "[SHA256]($baseUrl/$checksumFile)"
+
+          # --- Changelog Extraction ---
+          $notes = "No release notes found for this version."
           $changelogPath = "CHANGELOG.md"
           if (Test-Path $changelogPath) {
-              $version = "${{ github.ref_name }}".Substring(1)
+              $version = $tag.Substring(1)
               $changelogContent = Get-Content -Path $changelogPath -Raw
               $regex = "(?sm)## \[$version\].*?(?=\n## \[|$)"
               $match = [regex]::Match($changelogContent, $regex)
@@ -56,10 +65,11 @@ jobs:
               }
           }
           
+          # --- Final Release Body Construction ---
           $body = "## Downloads`n`n"
           $body += "| File | Checksum |`n"
           $body += "|---|---|`n"
-          $body += "| `d3d9-proxy-release.zip` | `SHA256` |`n`n"
+          $body += "| $zipLink | $checksumLink |`n`n"
           $body += "## Release Notes`n`n"
           $body += $notes
           

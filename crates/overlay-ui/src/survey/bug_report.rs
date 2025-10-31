@@ -21,8 +21,7 @@ impl BugReportWin {
 
     fn save_form_results(&self, engine: &Engine) -> Result<(), String> {
         let mut extra_data = std::collections::BTreeMap::new();  // TODO: just for testing purposes
-        let mut current_angles = engine_api::types::QAngle::default();
-        engine.client().get_view_angles(&mut current_angles);
+        let current_angles = engine.client().get_view_angles();
         extra_data.insert("player_pos".to_string(), serde_json::json!(format!("Vector({}, {}, {})", current_angles.x, current_angles.y, current_angles.z)));
 
         self.form.save_results(engine, Some(extra_data))
