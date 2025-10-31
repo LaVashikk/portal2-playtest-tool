@@ -28,9 +28,8 @@ impl BugReportWin {
         self.form.save_results(engine, Some(extra_data))
     }
 
-    fn close_window(&mut self, shared_state: &mut SharedState) {
+    fn close_window(&mut self) {
         self.is_modal_open = false;
-        // shared_state.is_overlay_focused = false;
         self.form.reset_state();
     }
 
@@ -93,13 +92,12 @@ impl Window for BugReportWin {
         engine.client().is_paused() && engine.client().is_in_game() && !shared_state.surver_is_opened
     }
 
-    fn draw(&mut self, ctx: &egui::Context, shared_state: &mut SharedState, engine: &Engine) {
+    fn draw(&mut self, ctx: &egui::Context, _shared_state: &mut SharedState, engine: &Engine) {
         if self.is_modal_open {
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                self.close_window(shared_state);
+                self.close_window();
             }
 
-            // shared_state.is_overlay_focused = true;
             let action = self.form.draw_modal_window(ctx, engine, true);
             match action {
                 FormAction::Submitted => {
@@ -108,10 +106,10 @@ impl Window for BugReportWin {
                         log::error!("Failed to save bug report: {}", e);
                     }
 
-                    self.close_window(shared_state);
+                    self.close_window();
                 }
                 FormAction::Closed => {
-                    self.close_window(shared_state);
+                    self.close_window();
                 }
                 FormAction::None => {}
             }
