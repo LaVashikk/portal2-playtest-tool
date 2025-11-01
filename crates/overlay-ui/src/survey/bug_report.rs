@@ -118,11 +118,11 @@ impl Window for BugReportWin {
     }
 
     fn on_raw_input(&mut self, umsg: u32, _wparam: u16) -> bool {
-        use windows::Win32::UI::WindowsAndMessaging::{WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP};
+        use windows::Win32::UI::WindowsAndMessaging::{WM_CHAR, WM_KEYDOWN, WM_SYSKEYDOWN};
         if !self.is_modal_open { return true; }
 
         match umsg {
-            WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP | WM_CHAR => false,
+            WM_KEYDOWN  | WM_SYSKEYDOWN  | WM_CHAR => false,
             _ => true
         }
     }
