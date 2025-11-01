@@ -317,7 +317,7 @@ impl WidgetForm {
     ) -> FormAction {
         let modal_id = egui::Id::new("widget_form_modal");
         let area = egui::Modal::default_area(modal_id)
-            .default_size(ctx.screen_rect().size() * 0.6);
+            .default_size(ctx.screen_rect().size() * 0.7);
         let modal = egui::Modal::new(modal_id)
             .frame(egui::Frame::NONE)
             .area(area);
