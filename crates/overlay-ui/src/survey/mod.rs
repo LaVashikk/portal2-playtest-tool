@@ -15,7 +15,7 @@ mod bug_report;
 pub use survey::SurveyWin;
 pub use bug_report::BugReportWin;
 
-const SERVER_URL: &str = "http://lavashik.dev:3001/submit";
+const SERVER_URL: &str = "https://lab.lavashik.dev/p2_survey/submit";
 // Global, write-once container for the moderator key, loaded from config.json.
 pub static GLOBAL_MOD_KEY: OnceLock<String> = OnceLock::new();
 // Global, thread-safe, mutable string to hold the current status of the network request.
