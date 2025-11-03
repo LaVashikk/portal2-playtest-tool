@@ -54,8 +54,14 @@ impl Window for SurveyWin {
         if self.form.draw_modal_window(ctx, engine, false) == FormAction::Submitted {
             match self.form.save_results(engine, None) {
                 Ok(_) => {
+                    // reset `open_survey` value!
+                    let kv = engine.cvar_system().find_var("open_survey").unwrap();
+                    // kv.reset(); // todo: add it later
+                    kv.set_value_int(0);
+                    kv.set_value_float(0.0);
+                    kv.set_value_str("");
+
                     let client = engine.client();
-                    client.client_cmd("open_survey 0");
                     if client.is_in_game() { client.client_cmd("unpause"); }
                     self.is_opened = false;
                     shared_state.surver_is_opened = false;
