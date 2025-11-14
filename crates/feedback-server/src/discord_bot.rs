@@ -59,8 +59,7 @@ async fn handle_generate_key(ctx: Context, command: &serenity::all::CommandInter
     // Check if the bot has these permissions in the channel
     let required_permissions = Permissions::VIEW_CHANNEL
         | Permissions::SEND_MESSAGES
-        | Permissions::EMBED_LINKS
-        | Permissions::ATTACH_FILES;
+        | Permissions::EMBED_LINKS;
 
     let has_permissions = command.app_permissions.map_or(false, |p| p.contains(required_permissions));
     if !has_permissions {
@@ -75,8 +74,7 @@ async fn handle_generate_key(ctx: Context, command: &serenity::all::CommandInter
                 "Required Permissions:",
                 "- `View Channel`\n\
                 - `Send Messages`\n\
-                - `Embed Links`\n\
-                - `Attach Files`",
+                - `Embed Links`",
                 false
             )
             .color(0xFF0000);

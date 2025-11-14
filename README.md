@@ -1,199 +1,312 @@
-
-# Portal 2 Rust Overlay Framework
+# Portal 2 Playtest Tool
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=flat&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x86-blue)](https://www.microsoft.com/windows)
 [![Source Engine](https://img.shields.io/badge/Source%20Engine-Compatible-orange)](https://developer.valvesoftware.com/wiki/Source)
 
-This repository is a powerful framework and public template for creating custom in-game tools and UIs for Source Engine games, built with Rust and the `egui` library. Click the **"Use this template"** button above to get started with a clean copy of the framework for your own project.
+The **Portal 2 Playtest Tool** is a server-side plugin for **Portal 2** and Source-based mods that lets developers and level designers collect structured feedback directly in-game. Playtesters do not need any additional software: feedback and bug reports are sent straight to your Discord server via the **Playtest Analysis Core** bot.
 
-**[Get Started](#-quick-start)** • **[Features](#-features)** • **[Showcase](#-showcase)** • **[Documentation](CONTRIBUTING.md)** • **[Support](https://github.com/LaVashikk/portal2-rust-overlay/issues)**
+## ⚡ Quickstart
+
+1. Download `server_plugin.zip` from the [Releases](https://github.com/LaVashikk/portal2-playtest-tool/releases) page.
+2. Extract it into your `Portal 2/<portal2_or_mod>/addons/` folder.
+3. Invite the ["Playtest Analysis Core"](https://discord.com/oauth2/authorize?client_id=1427031735429894255) Discord bot and run `/generate_key` in the channel where you want to receive feedback.
+4. Put the generated key into `addons/survey/config.json` as `"mod_key"`.
+5. Launch the game: playtesters can report issues via the pause-menu **"❗"** button.
+
+## Showcase
+
+*Bug report form accessible from the pause menu.*
+![Bug Report UI](assets/pictures/bug_report_ui.jpg)
+
+*The default survey form.*
+![Default Survey UI](assets/pictures/default_survey_ui.jpg)
+
+*Example of a feedback submission in Discord.*
+![Discord Feedback Post](assets/pictures/discord_feedback_post.jpg)
+
+## Installation and Setup
+
+### 1. Download the Plugin
+
+Go to the [Releases](https://github.com/LaVashikk/portal2-playtest-tool/releases) page and download the latest `server_plugin.zip` file.
+
+### 2. Install the Plugin Files
+
+Extract the contents of `server_plugin.zip` into the `addons` directory of your game or mod.
+
+**Path pattern:**
+
+```
+.../steamapps/common/Portal 2/<portal2_or_mod>/addons/
+```
+
+**Examples:**
+
+Portal 2:
+```
+.../steamapps/common/Portal 2/portal2/addons/
+```
+
+Custom mod:
+```
+.../sourcemods/pcapture/addons/
+```
+
+After extraction, your `addons` folder should contain:
+
+- `playtest_assistant.dll`
+- `overlay.vdf`
+- `survey/` (directory with configuration and survey JSON files)
+
+### 3. Set Up the Discord Bot
+
+The **Playtest Analysis Core** bot relays all in-game submissions to Discord.
+
+1. **Invite the bot** to your server:
+   https://discord.com/oauth2/authorize?client_id=1427031735429894255
+
+2. In the channel where you want to receive feedback, run:
+   ```
+   /generate_key
+   ```
+   The bot will respond with a unique **moderator key** for that channel.
+
+Notes:
+
+- The key is tied to the channel where you run `/generate_key`. All feedback using this key will appear in that channel.
+- You can generate multiple keys for different channels if needed (e.g. separate channels for different mods/maps).
+
+### 4. Configure the Plugin
+
+Edit the configuration file:
+
+**File:**
+```
+.../addons/survey/config.json
+```
+
+**Minimal content:**
+```
+{
+  "mod_key": "PASTE_YOUR_KEY_FROM_THE_BOT_HERE"
+}
+```
+
+Save the file. Setup is complete; you can now start the game or your mod.
 
 ---
 
-# 🚀 Quick Test (Using Pre-built Release)
+## Usage
 
-The easiest way to try the overlay is with a pre-built version.
+### For Playtesters: Reporting a Bug
 
-1.  Go to the [**Releases Page**](https://github.com/LaVashikk/portal2-rust-overlay/releases) and download the `injector_d3d9_proxy.zip` file.
-2.  Extract `d3d9.dll` from the zip file.
-3.  Place `d3d9.dll` into your game's `bin` folder (e.g., `C:\Steam\steamapps\common\Portal 2\bin`).
-4.  Launch the game.
-5.  Press **F3** in-game to toggle the overlay menu's focus.
+1. Pause the game.
+2. A **"❗"** button will appear in the bottom-right corner of the pause menu.
+3. Click it to open the **Feedback & Bug Report** form.
+4. Fill in the form and submit. The report, along with context (map, position, etc.), will be sent to the configured Discord channel.
 
-### What You Can Build
+### For Level Designers: Triggering Surveys
 
-Use this framework as a foundation for a wide variety of tools:
-- **Debug Tools** - Real-time variable monitoring, performance profilers
-- **Gameplay Enhancements** - Custom HUDs, information overlays
-- **Development Tools** - Entity inspectors, playtest surveys
-- **Training Tools** - Practice modes, trajectory visualizers
+You can open survey windows using a console command, which can be fired:
 
-# ✨ Showcase
+- Manually from the developer console.
+- From in-game entities such as `point_clientcommand`, `trigger_multiple`, etc.
 
-## Projects Built with this Framework
+#### Open the default survey
 
-- [Portal 2 Survey Tool](https://github.com/LaVashikk/portal2-survey-tool) — advanced in-game feedback and bug reporting
-- Your project here — see how to add it in [CONTRIBUTING.md](CONTRIBUTING.md#adding-your-project-to-showcase)
+The default survey is typically defined in `addons/survey/default.json`.
 
-> [TIP] 
-> Add the `p2-rust-overlay-project` topic to your repo for discoverability!
+```
+open_survey 1
+```
 
+#### Open a custom survey file
 
-## Demonstrations
+```
+open_survey survey/your_custom_survey.json
+```
 
-### Real-Time Engine Control
-Direct manipulation of game variables with immediate visual feedback:
+**Important constraints:**
 
-https://github.com/user-attachments/assets/d99e9ac5-a6ff-471c-8b4e-cc9f0139e185
+- The path must:
+  - Start with `survey/`
+  - End with `.json`
+- The JSON file must exist under:
+  ```
+  .../addons/survey/
+  ```
+- If the file is not found or JSON is invalid, the game may crash with a “file not found” or similar error.
 
-### Custom UI Replacement
-Modern, responsive interface replacing game's default UI:
+**Recommended workflow:**
 
-https://github.com/user-attachments/assets/bf2acc21-aca0-4191-a110-228df20afbf8
+1. Place your custom survey file under `addons/survey/`.
+2. Validate the JSON via any online JSON validator.
+3. Test the survey by running `open_survey survey/your_file.json` manually in the console.
+4. Only then hook the command up to map triggers.
 
-### External App Integration
-Any `egui` application can be ported seamlessly:
+## Survey Configuration Format
 
-<img width="1280" alt="Gemini-eGUI integration" src="https://github.com/user-attachments/assets/2a3a405e-65b4-44c0-97e5-1e355b1a5184" />
+Survey forms are defined in JSON files under `addons/survey/`. The plugin reads these files and builds the in-game UI dynamically.
 
-## Installation Guide
+### Basic structure
 
-## Prerequisites
-
-- Windows 10/11 (x64 with x86 game support)
-- [Rust toolchain](https://rustup.rs/) with `i686-pc-windows-msvc` or `i686-pc-windows-gnu` target
-- Visual Studio 2019+ with C++ tools OR MinGW-w64
-- Source Engine game
-
-## Choose Your Injection Method
-This section explains how to install pre-built releases for each injection method.
-
-<table>
-<tr>
-<th>Method</th>
-<th>Output File</th>
-<th>Best For</th>
-<th>Pros</th>
-<th>Cons</th>
-</tr>
-<tr>
-<td><b>D3D9 Proxy</b><br><code>injector_d3d9_proxy</code></td>
-<td><code>d3d9.dll</code></td>
-<td>Most Source games</td>
-<td>✓ Universal<br>✓ Simple setup<br>✓ No game files modified</td>
-<td>⚠️ No Vulkan Support<br>⚠️ Installation in sourcemods is not possible</td>
-</tr>
-<tr>
-<td><b>Server Plugin</b><br><code>injector_server_plugin</code></td>
-<td><code>plugin.dll</code></td>
-<td><b>Portal 2 (recommended)</b></td>
-<td>✓ Clean integration<br>✓ Works with sourcemods<br>✓ Easy to remove<br>✓ Hot-swap in runtime<br>✓ Vulkan Support</td>
-<td>⚠️ Plugin support required. Tested only with Portal 2</td>
-</tr>
-<tr>
-<td><b>Client Wrapper</b><br><code>injector_client_wrapper</code></td>
-<td><code>client.dll</code></td>
-<td>Advanced scenarios</td>
-<td>✓ Deep integration<br>✓ Vulkan Support</td>
-<td>⚠️ Modifies game files<br>⚠️ Complex setup</td>
-</tr>
-</table>
-
-
-<br>
-
-<details>
-<summary><strong>Method 1: D3D9 Proxy (Universal)</strong></summary>
-
-1.  Download `injector_d3d9_proxy.zip` from the [Releases Page](https://github.com/LaVashikk/portal2-rust-overlay/releases).
-2.  Place the extracted `d3d9.dll` into your game's `bin` directory (e.g., `C:\...\[GAME]\bin\`).
-</details>
-
-<details>
-<summary><strong>Method 2: Server Plugin (Portal 2 Recommended)</strong></summary>
-
-1.  Download `injector_server_plugin.zip` from the [Releases Page](https://github.com/LaVashikk/portal2-rust-overlay/releases).
-2.  Place the extracted `egui_overlay_plugin.dll` into `...Portal 2\portal2\addons\`.
-3.  Create a new text file named `overlay.vdf` in the `addons` folder with the following content:
-    ```vdf
-    "Plugin"
+```
+{
+  "title": "Feedback & Bug Report",
+  "widgets": [
     {
-        "file"		"addons/egui_overlay_plugin"
+      "type": "RadioChoices",
+      "text": "Type of Feedback:",
+      "choices": [
+        "Bug (Something is broken)",
+        "Glitch / Oversight (Minor issue)",
+        "Suggestion (Improvement idea)",
+        "General Opinion / Feedback"
+      ],
+      "required": true
+    },
+    {
+      "type": "RadioChoices",
+      "text": "Category:",
+      "choices": [
+        "Gameplay / Mechanics",
+        "Level Design (Stuck spot, Out of bounds, Exploits)",
+        "Visuals / Models / Textures",
+        "Audio / Sound",
+        "UI / HUD",
+        "Text / Typos",
+        "Other"
+      ],
+      "required": true
+    },
+    {
+      "type": "RadioChoices",
+      "text": "Impact on Gameplay:",
+      "choices": [
+        "Blocker (Cannot progress)",
+        "Major (Significantly hinders gameplay)",
+        "Minor (Noticeable, but playable)",
+        "Cosmetic (Does not affect gameplay)",
+        "N/A (For suggestions)"
+      ],
+      "required": true
+    },
+    {
+      "type": "Essay",
+      "text": "Details (What happened? Steps to reproduce? What did you expect?):",
+      "required": true
     }
-    ```
-</details>
+  ]
+}
+```
 
-<details>
-<summary><strong>Method 3: Client Wrapper (Advanced)</strong></summary>
+**Fields:**
 
-1.  Go to your game's `bin` folder (e.g., `.../Portal 2/portal2/bin/`).
-2.  **Backup your original `client.dll`** by renaming it to `client_original.dll`.
-3.  Download `injector_client_wrapper.zip` from the [Releases Page](https://github.com/LaVashikk/portal2-rust-overlay/releases).
-4.  Place the extracted `client.dll` into the `bin` folder.
-</details>
+- `title` *(string, optional)* – Title displayed at the top of the survey window.
+- `widgets` *(array, required)* – List of UI elements (questions/fields).
+
+Each item in `widgets` is a **widget** (question). Supported widget types are described below.
 
 ---
 
-# 🧑‍💻 For Developers
+## Supported widget types
 
-Ready to create your own tools? This project is a template designed for extension. All development instructions, from setting up your environment to building from source and adding new windows, are in our comprehensive **[Developer Guide](CONTRIBUTING.md)**.
+### 1. `RadioChoices`
 
-## Project Structure
+Single-choice question with multiple options (radio buttons).
 
 ```
-crates/
-├── injector_*/          # Entry points (don't modify)
-├── hook_core/           # D3D9 hooking core
-├── overlay_runtime/     # Manages UI state, input, and rendering loop
-├── egui_backend/        # The egui rendering backend for D3D9
-├── source_sdk/          # Safe bindings to Source Engine functions
-└── custom_windows/      # **YOUR CODE GOES HERE! 🎯**
+{
+  "type": "RadioChoices",
+  "text": "Type of Feedback:",
+  "choices": [
+    "Bug (Something is broken)",
+    "Glitch / Oversight (Minor issue)",
+    "Suggestion (Improvement idea)",
+    "General Opinion / Feedback"
+  ],
+  "required": true
+}
 ```
+
+- `type` – must be `"RadioChoices"`.
+- `text` *(string, required)* – Question text shown to the player.
+- `choices` *(array of strings, required)* – List of options; exactly one can be selected.
+- `required` *(boolean, optional)* – If `true`, the player must select a value to submit the form.
+
+Use this for categories, types of issues, severity levels, etc.
+
+### 2. `Essay`
+
+Multiline free-text input for detailed responses.
+
+```
+{
+  "type": "Essay",
+  "text": "Details (What happened? Steps to reproduce? What did you expect?):",
+  "required": true
+}
+```
+
+- `type` – must be `"Essay"`.
+- `text` *(string, required)* – Prompt for the text field.
+- `required` *(boolean, optional)* – If `true`, the field cannot be left empty.
+
+Use this for bug descriptions, open feedback, and explanations.
+
+### 3. `OneToTen`
+
+Numeric rating question from 1 to 10, with labels at the ends.
+
+```
+{
+  "type": "OneToTen",
+  "text": "Please rate your enjoyment of this section.",
+  "label_at_one": "Not enjoyable",
+  "label_at_ten": "Greatly enjoyable",
+  "required": true
+}
+```
+
+- `type` – must be `"OneToTen"`.
+- `text` *(string, required)* – Question text.
+- `label_at_one` *(string, optional but recommended)* – Label for the “1” end of the scale.
+- `label_at_ten` *(string, optional but recommended)* – Label for the “10” end of the scale.
+- `required` *(boolean, optional)* – If `true`, the player must select a value.
+
+Use this for satisfaction, difficulty, pacing, or enjoyment ratings.
+
+---
+
+## Writing custom surveys
+
+1. Create a new file in `addons/survey/`, for example:
+   ```
+   addons/survey/chapter1_intro.json
+   ```
+2. Define the survey using the schema above:
+   - Set a `title`.
+   - Add one or more `widgets` with supported `type` values.
+   - Make sure `choices` arrays are non-empty for `RadioChoices`.
+3. Validate the JSON (no trailing commas, proper quotes, etc.).
+4. In-game, open it via:
+   ```
+   open_survey survey/chapter1_intro.json
+   ```
+
+**Tips:**
+
+- Keep questions short and concrete.
+- Use `RadioChoices` for classification and quick answers.
+- Use `Essay` for context and detailed explanations.
+- Use `OneToTen` for measuring player perception (difficulty, enjoyment, clarity).
 
 ## Troubleshooting
 
-<details>
-<summary><b>Common Issues & Solutions</b></summary>
-
-| Issue | Solution |
-|-------|----------|
-| **Overlay not appearing** | Press `F3` to toggle focus. Check the in-game console and `d3d9_proxy_mod.log` (in the game directory) for errors. |
-| **Game crashes on start** | Ensure you are using a 32-bit game. Verify game files in Steam. Make sure you placed the DLL in the correct folder (`bin` is common). |
-| **Mouse input doesn't work** | Run the game in windowed or borderless-windowed mode. |
-| **Performance drops** | Disable VSync, reduce UI complexity |
-
-</details>
-
-## Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
-- Setting up development environment
-- Keeping your fork updated
-- Submitting pull requests
-- Code style guidelines
-
-## Acknowledgments
-
-This project wouldn't have been possible without the inspiration and help from several projects and individuals in the community.
-
-- [egui](https://github.com/emilk/egui) - Immediate mode GUI framework
-- [p2-rtx](https://github.com/xoxor4d/p2-rtx) for inspiring the project and showing that creating external custom GUIs was possible.
-- [Portal 2 Multiplayer Mod Plugin](https://github.com/Portal-2-Multiplayer-Mod/Portal-2-Multiplayer-Mod-Plugin) for serving as a valuable codebase and reference.
-
-Special thanks to **[@OrsellGit](https://github.com/OrsellGit)** and **[@0xNULLderef](https://github.com/0xNULLderef)** for their invaluable technical assistance with the Source Engine plugin system.
-
+todo
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details. Use freely in your projects!
-
----
-
-<p align="center">
-  <b>Ready to build your own overlay?</b><br>
-  <a href="https://github.com/LaVashikk/portal2-rust-overlay/generate">Use this template</a> •
-  <a href="CONTRIBUTING.md">Read the docs</a> •
-  <a href="https://github.com/LaVashikk/portal2-rust-overlay/issues">Get help</a>
-</p>
+This project is licensed under the MIT License – see the [LICENSE](LICENSE) file for details.

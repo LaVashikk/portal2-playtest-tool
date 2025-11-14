@@ -45,25 +45,12 @@ pub trait Window: std::fmt::Debug { //? todo: for debug
 /// This function is the designated discovery point for UI components. The core
 /// application calls it to populate the `UiManager`'s window list.
 pub fn regist_windows() -> Vec<Box<dyn Window + Send>> {
-    // Reads 'SURVEY/config.json' and initializes the global mod-key
-    let path = std::path::PathBuf::from("SURVEY/config.json");
-    let key = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str::<survey::ClientConfig>(&s).ok())
-        .map(|c| c.mod_key)
-        .unwrap_or_else(|| {
-            log::error!("Could not read or parse SURVEY/config.json. Mod-key will be empty.");
-            String::new()
-        });
-
-    // This will only succeed on the first call.
-    let _ = survey::GLOBAL_MOD_KEY.set(key);
-    survey::set_request_status("idle");
+    survey::init_survey();
 
     vec![
         Box::new(OverlayText::default()),
-        Box::new(survey::SurveyWin::new("SURVEY/default.json")),
-        Box::new(survey::BugReportWin::new("SURVEY/bug_report.json")),
+        Box::new(survey::SurveyWin::new("survey/default.json")),
+        Box::new(survey::BugReportWin::new("survey/bug_report.json")),
     ]
 }
 
@@ -87,11 +74,9 @@ impl Window for OverlayText {
 
         let debug_text = format!(
             "DEBUG INFO:\n----------------------\n\
-                is_focused: {}\n\
-                wants_keyboard: {}\n\
-                wants_pointer: {}\n\
+                keyboard: {}\n\
+                pointer: {}\n\
                 request_status: {}",
-            _shared_state.is_overlay_focused,
             ctx.wants_keyboard_input(),
             ctx.wants_pointer_input(),
             status

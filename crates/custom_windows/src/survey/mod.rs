@@ -9,6 +9,7 @@ use source_sdk::Engine;
 
 mod types;
 use types::*;
+mod utils;
 
 mod survey;
 mod bug_report;
@@ -39,6 +40,23 @@ pub fn get_request_status() -> String {
     REQUEST_STATUS.lock().map(|g| g.clone()).unwrap_or_default()
 }
 
+pub fn init_survey() {
+    // Reads 'SURVEY/config.json' and initializes the global mod-key
+    let path = utils::get_dll_directory().unwrap_or_default().join("survey/config.json"); // todo: temporary solution
+    let key = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<ClientConfig>(&s).ok())
+        .map(|c| c.mod_key)
+        .unwrap_or_else(|| {
+            log::error!("Could not read or parse survey/config.json. Mod-key will be empty.");
+            String::new()
+        });
+
+    // This will only succeed on the first call.
+    let _ = GLOBAL_MOD_KEY.set(key);
+    set_request_status("idle");
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum FormAction {
     Submitted,
@@ -54,25 +72,6 @@ pub struct WidgetForm {
     config_path: String,
 }
 
-fn show_error_and_panic(caption: &str, text: &str) -> ! { // utils
-    use std::ffi::CString;
-    use windows::core::PCSTR;
-    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxA, MB_OK, MB_ICONERROR};
-
-    log::error!("ERROR {}: {}", caption, text);
-    let lp_text = CString::new(text).unwrap();
-    let lp_caption = CString::new(caption).unwrap();
-    unsafe {
-        MessageBoxA(
-            None,
-            PCSTR(lp_text.as_ptr() as *const u8),
-            PCSTR(lp_caption.as_ptr() as *const u8),
-            MB_OK | MB_ICONERROR,
-        );
-    }
-    panic!("{}", text);
-}
-
 impl WidgetForm {
     pub fn new(config_path: &str) -> Self {
         let mut app = Self::default();
@@ -83,7 +82,7 @@ impl WidgetForm {
     /// Loads and initializes a FORM from a configuration file.
     /// This method resets all previous states.
     fn load_form(&mut self, config_path_str: &str) {
-        let config_path = PathBuf::from(config_path_str);
+        let config_path = utils::get_dll_directory().unwrap_or_default().join(config_path_str); // todo: temporary solution
 
         // Read the configuration file into a string
         let json_str = match fs::read_to_string(&config_path) {
@@ -94,7 +93,7 @@ impl WidgetForm {
                     config_path.display(),
                     e
                 );
-                show_error_and_panic("File Read Error", &error_text); // TODO: LMAO GUYS IM COOCKED
+                utils::show_error_and_panic("File Read Error", &error_text); // TODO: LMAO GUYS IM COOCKED
             }
         };
 
@@ -107,7 +106,7 @@ impl WidgetForm {
                     config_path.display(),
                     e
                 );
-                show_error_and_panic("Configuration Error", &error_text);
+                utils::show_error_and_panic("Configuration Error", &error_text);
             }
         };
 
@@ -194,7 +193,7 @@ impl WidgetForm {
             config_stem, map_name, submission_timestamp
         );
 
-        let output_dir = PathBuf::from("SURVEY/answers");
+        let output_dir = utils::get_dll_directory().unwrap_or_default().join("survey/answers"); // todo: temporary solution
         fs::create_dir_all(&output_dir).map_err(|e| format!("Failed to create output directory: {}", e))?;
         let output_path = output_dir.join(filename);
 
