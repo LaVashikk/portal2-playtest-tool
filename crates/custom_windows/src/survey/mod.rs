@@ -71,6 +71,7 @@ pub struct WidgetForm {
     state: Vec<WidgetState>,
     pub opened: bool,
     config_path: String,
+    scroll_to_top: bool,
 }
 
 impl WidgetForm {
@@ -152,6 +153,7 @@ impl WidgetForm {
 
     pub fn reset_state(&mut self) {
         self.state = Self::create_initial_state(&self.config.widgets);
+        self.scroll_to_top = true;
     }
 
     /// Collects all data and saves it to a structured JSON file.
@@ -389,6 +391,11 @@ impl WidgetForm {
 
         let mut action = FormAction::None;
 
+        ctx.input_mut(|i| {
+            // Increase the scroll speed with the mouse wheel
+            i.smooth_scroll_delta *= 10.0;
+        });
+
         modal.show(ctx, |ui| {
             egui::Frame::window(ui.style()).show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -409,7 +416,15 @@ impl WidgetForm {
                 ui.separator();
 
                 let min_scroll = ctx.screen_rect().size().y * 0.7;
-                egui::ScrollArea::vertical().min_scrolled_height(min_scroll).show(ui, |ui| {
+                let mut scroll_area = egui::ScrollArea::vertical()
+                    .min_scrolled_height(min_scroll);
+
+                if self.scroll_to_top {
+                    scroll_area = scroll_area.vertical_scroll_offset(0.0);
+                    self.scroll_to_top = false;
+                }
+
+                scroll_area.show(ui, |ui| {
                     self.render_widgets(ui);
                     ui.add_space(20.0);
 
