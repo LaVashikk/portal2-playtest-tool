@@ -9,3 +9,5 @@ build-plugin = "build --target i686-pc-windows-msvc --release -p injector_server
 gnu-build-d3d9 = "build --target i686-pc-windows-gnu --release"
 gnu-build-client = "build --target i686-pc-windows-gnu --release -p injector_client_wrapper"
 gnu-build-plugin = "build --target i686-pc-windows-gnu --release -p injector_server_plugin"
+
+build-server = "build --release --package feedback-server --target x86_64-unknown-linux-gnu"

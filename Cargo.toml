@@ -16,6 +16,9 @@ members = [
 
     # Source Engine FFI bindings
     "crates/source-sdk",
+
+    # Server backend
+    "crates/feedback-server"
 ]
 default-members = ["crates/injector_d3d9_proxy"]
 
