@@ -1,10 +1,11 @@
 use crate::models::{ModeratorKeyData, SubmissionEvent};
 use dashmap::DashMap;
+use indexmap::IndexMap;
 use serde::{de::DeserializeOwned, Serialize};
 use serenity::prelude::TypeMapKey;
 use tracing::{info, warn};
 use uuid::Uuid;
-use std::{collections::BTreeMap, fs, io, path::PathBuf, sync::Arc};
+use std::{fs, io, path::PathBuf, sync::Arc};
 use tokio::sync::broadcast;
 
 // alias for thread-safe key store
@@ -62,11 +63,11 @@ where
     V: DeserializeOwned + Clone,
 {
     let data = fs::read_to_string(path)?;
-    let btree_map: BTreeMap<K, V> = serde_json::from_str(&data)
+    let hash_map: IndexMap<K, V> = serde_json::from_str(&data)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     let dashmap = DashMap::new();
-    for (k, v) in btree_map {
+    for (k, v) in hash_map {
         dashmap.insert(k, v);
     }
     Ok(Arc::new(dashmap))
@@ -77,7 +78,7 @@ where
     K: Eq + std::hash::Hash + Ord + Clone + Serialize,
     V: Clone + Serialize,
 {
-    let btree_map: BTreeMap<K, V> = map.iter().map(|item| (item.key().clone(), item.value().clone())).collect();
-    let json_data = serde_json::to_string_pretty(&btree_map)?;
+    let hash_map: IndexMap<K, V> = map.iter().map(|item| (item.key().clone(), item.value().clone())).collect();
+    let json_data = serde_json::to_string_pretty(&hash_map)?;
     fs::write(path, json_data)
 }

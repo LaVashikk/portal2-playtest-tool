@@ -1,5 +1,5 @@
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FormSubmission {
@@ -9,10 +9,10 @@ pub struct FormSubmission {
     pub map_name: String,
     pub game_timestamp: f32,
     pub submission_timestamp: u64,
-    pub answers: std::collections::BTreeMap<String, String>,
+    pub answers: IndexMap<String, String>,
 
     #[serde(flatten)]
-    pub extra_data: std::collections::BTreeMap<String, serde_json::Value>,
+    pub extra_data: IndexMap<String, serde_json::Value>,
 }
 
 // Data associated with a moderator key

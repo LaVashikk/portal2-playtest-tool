@@ -20,9 +20,10 @@ impl BugReportWin {
     }
 
     fn save_form_results(&self, engine: &Engine) -> Result<(), String> {
-        let mut extra_data = std::collections::BTreeMap::new();  // TODO: just for testing purposes
+        let mut extra_data = indexmap::IndexMap::new();
         let current_angles = engine.client().get_view_angles();
-        extra_data.insert("player_pos".to_string(), serde_json::json!(format!("Vector({}, {}, {})", current_angles.x, current_angles.y, current_angles.z)));
+        extra_data.insert("player_angles".to_string(), serde_json::json!(format!("Vector({}, {}, {})", current_angles.x, current_angles.y, current_angles.z)));
+        extra_data.insert("TODO".to_string(), serde_json::json!(String::from("WIP. This is not complete")));
 
         self.form.save_results(engine, Some(extra_data))
     }

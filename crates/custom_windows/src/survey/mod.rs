@@ -1,10 +1,10 @@
 use std::sync::{LazyLock, Mutex, OnceLock};
-use std::collections::BTreeMap;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 use std::fs;
 use std::path::PathBuf;
 
+use indexmap::IndexMap;
 use source_sdk::Engine;
 
 mod types;
@@ -146,7 +146,7 @@ impl WidgetForm {
     pub fn save_results(
         &self,
         engine: &Engine,
-        extra_data: Option<BTreeMap<String, serde_json::Value>>,
+        extra_data: Option<IndexMap<String, serde_json::Value>>,
     ) -> Result<(), String> {
         // Collect common metadata
         let client = engine.client();
@@ -161,7 +161,7 @@ impl WidgetForm {
             .as_secs();
 
         // Format answers as "question: answer"
-        let mut answers = BTreeMap::new();
+        let mut answers = IndexMap::new();
         for (config, state) in self.config.widgets.iter().zip(self.state.iter()) {
             answers.insert(config.text().to_string(), state.to_string());
         }
