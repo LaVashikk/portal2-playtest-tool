@@ -40,9 +40,17 @@ impl Window for SurveyWin {
                 .unwrap_or_default();
 
             // If a new survey is requested, load it
-            if !target_survey_path.chars().all(|c| c.is_ascii_digit()) && self.form.config_path != target_survey_path {
-                self.form.load_form(&target_survey_path);
+            let is_custom_survey_requested = !target_survey_path.chars().all(|c| c.is_ascii_digit());
+            if is_custom_survey_requested {
+                if self.form.config_path != target_survey_path {
+                    self.form.load_form(&target_survey_path);
+                }
             }
+            //
+            else if self.form.config_path != DEFAULT_SURVEY {
+                self.form.load_form(DEFAULT_SURVEY);
+            }
+
 
             let client = engine.client();
             if !client.is_paused() && client.is_in_game() { client.client_cmd("pause"); }
