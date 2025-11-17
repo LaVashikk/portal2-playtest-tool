@@ -1,24 +1,53 @@
 {
-  "title": "Vista Generic",
+  "title": "Example of Feedback Form",
   "widgets": [
-
+    {
+      "type": "TextBlock",
+      "text": "Thank you for participating in this playtest. Your detailed feedback is crucial for improving the game. Please answer the following questions honestly."
+    },
+    {
+      "type": "Header",
+      "text": "Section 1: Overall Experience"
+    },
     {
       "type": "OneToTen",
-      "text": "Please rate your enjoyment of this section.",
-      "label_at_one": "Not enjoyable",
-      "label_at_ten": "Greatly enjoyable",
+      "text": "How enjoyable was this section of the map overall?",
+      "label_at_one": "Not at all",
+      "label_at_ten": "Extremely",
       "required": true
     },
-
     {
       "type": "Essay",
-      "text": "Please describe what was happening in this area [OPTIONAL]",
+      "text": "What were your thoughts on the final puzzle? Please describe your thought process, what you liked, and what you found frustrating.",
       "required": false
     },
-
     {
-      "type": "Essay",
-      "text": "Please put any additional comments on this area here [OPTIONAL]",
+      "type": "Separator"
+    },
+    {
+      "type": "Header",
+      "text": "Section 2: Technical Feedback"
+    },
+    {
+      "type": "RadioChoices",
+      "text": "What was the most significant challenge for you?",
+      "choices": [
+        "Navigating the environment",
+        "Understanding puzzle mechanics",
+        "Combat encounters",
+        "I had no significant challenges"
+      ],
+      "required": true
+    },
+    {
+      "type": "Checkboxes",
+      "text": "Did you experience any of the following technical issues? (Select all that apply)",
+      "choices": [
+        "Frame rate drops or stuttering",
+        "Visual glitches or artifacts",
+        "Incorrect or missing sounds",
+        "Game crash"
+      ],
       "required": false
     }
   ]
