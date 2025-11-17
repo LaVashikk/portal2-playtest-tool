@@ -7,7 +7,7 @@ use serenity::http::Http;
 use serenity::model::gateway::Ready;
 use serenity::prelude::*;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 pub struct BotHandler;
@@ -168,7 +168,7 @@ pub async fn notification_listener(state: ServerState, http: Arc<Http>) {
 
         // section 3: files (todo)
         embed = embed.field("\u{200B}", "**Files:**", false)
-            .field("Raw json", data_url, false);
+            .field("Raw json", data_url.clone(), false);
 
         let channel_id_u64 = match event.destination.channel_id.parse::<u64>() {
             Ok(id) => id,
@@ -183,7 +183,33 @@ pub async fn notification_listener(state: ServerState, http: Arc<Http>) {
 
         info!("Attempting to send message to channel {}", channel_id);
         if let Err(why) = channel_id.send_message(&http, builder).await {
-            error!("Failed to send notification to channel {}: {:?}", channel_id, why);
+            warn!("Failed to send notification embed to channel {}: {:?}", channel_id, why);
+
+            // If sending the embed fails (e.g., too large), send a fallback message.
+            let fallback_embed = CreateEmbed::new()
+                .title("📄 Submission Received (Manual View Required)")
+                .color(0x99AAB5)
+                .description(format!(
+                    "The full submission for `{}` was received successfully, but it is too large to be displayed as a summary here.",
+                    survey_filename
+                ))
+                .field(
+                    "Submitted By",
+                    format!("**{}** (`{}`)", submission.user_name, submission.user_xuid),
+                    false
+                )
+                .field("Direct Link to Raw Data", data_url, false);
+
+
+            let fallback_builder = CreateMessage::new().embed(fallback_embed);
+            if let Err(fallback_why) = channel_id.send_message(&http, fallback_builder).await {
+                error!(
+                    "Failed to send fallback notification to channel {}: {:?}",
+                    channel_id, fallback_why
+                );
+            } else {
+                info!("Successfully sent fallback message to channel {}", channel_id);
+            }
         } else {
             info!("Successfully sent message to channel {}", channel_id);
         }
