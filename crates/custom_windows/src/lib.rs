@@ -48,8 +48,7 @@ pub fn regist_windows() -> Vec<Box<dyn Window + Send>> {
     survey::init_survey();
 
     vec![
-        Box::new(OverlayText::default()),
-        Box::new(survey::SurveyWin::new("survey/default.json")),
+        Box::new(survey::SurveyWin::new()),
         Box::new(survey::BugReportWin::new("survey/bug_report.json")),
     ]
 }

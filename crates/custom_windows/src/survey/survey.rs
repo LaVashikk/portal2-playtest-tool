@@ -1,4 +1,4 @@
-use crate::{SharedState, Window};
+use crate::{survey::DEFAULT_SURVEY, SharedState, Window};
 use super::{FormAction, WidgetForm};
 
 #[derive(Debug)]
@@ -8,9 +8,9 @@ pub struct SurveyWin {
 }
 
 impl SurveyWin {
-    pub fn new(config_path: &str) -> Self {
+    pub fn new() -> Self {
         Self {
-            form: WidgetForm::new(config_path),
+            form: WidgetForm::new(DEFAULT_SURVEY),
             is_opened: false,
         }
     }
@@ -25,7 +25,6 @@ impl Window for SurveyWin {
             Some(val) => !val.get_string().chars().all(|c| c.is_ascii_digit()) || val.get_int() != 0,
             None => { engine.client().client_cmd("setinfo open_survey 0"); false }, // todo: init it in other place!
         }
-
     }
 
     fn draw(

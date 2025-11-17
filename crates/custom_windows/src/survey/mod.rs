@@ -16,6 +16,7 @@ mod bug_report;
 pub use survey::SurveyWin;
 pub use bug_report::BugReportWin;
 
+const DEFAULT_SURVEY: &str = "survey/default.json";
 const SERVER_URL: &str = "https://lab.lavashik.dev/p2_survey/submit";
 // Global, write-once container for the moderator key, loaded from config.json.
 pub static GLOBAL_MOD_KEY: OnceLock<String> = OnceLock::new();
@@ -82,7 +83,16 @@ impl WidgetForm {
     /// Loads and initializes a FORM from a configuration file.
     /// This method resets all previous states.
     fn load_form(&mut self, config_path_str: &str) {
-        let config_path = utils::get_dll_directory().unwrap_or_default().join(config_path_str); // todo: temporary solution
+        let mut relative_path = std::path::PathBuf::from(config_path_str);
+        if relative_path.extension().is_none() {
+            relative_path.set_extension("json");
+        }
+        if relative_path.components().count() == 1 {
+            relative_path = std::path::PathBuf::from("survey").join(relative_path);
+        }
+
+        let final_config_path_str = relative_path.to_string_lossy().into_owned();
+        let config_path = utils::get_dll_directory().unwrap_or_default().join(final_config_path_str); // todo: temporary solution
 
         // Read the configuration file into a string
         let json_str = match fs::read_to_string(&config_path) {
