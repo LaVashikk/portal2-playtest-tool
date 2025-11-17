@@ -1,5 +1,5 @@
-use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use indexmap::IndexMap;
 
 
 #[derive(Deserialize, Debug)]
@@ -12,12 +12,24 @@ pub struct OneToTenConfig {
 
 #[derive(Deserialize, Debug)]
 pub struct EssayConfig {
-    text: String,
-    required: bool,
+    pub text: String,
+    pub required: bool,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct RadioChoicesConfig {
+    pub text: String,
+    pub choices: Vec<String>,
+    pub required: bool,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct TextBlockConfig {
+    pub text: String,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct CheckboxesConfig {
     pub text: String,
     pub choices: Vec<String>,
     pub required: bool,
@@ -29,6 +41,10 @@ pub enum WidgetConfig {
     OneToTen(OneToTenConfig),
     Essay(EssayConfig),
     RadioChoices(RadioChoicesConfig),
+    Checkboxes(CheckboxesConfig),
+    TextBlock(TextBlockConfig),
+    Header(TextBlockConfig),
+    Separator,
 }
 
 impl WidgetConfig {
@@ -37,6 +53,8 @@ impl WidgetConfig {
             WidgetConfig::OneToTen(c) => c.required,
             WidgetConfig::Essay(c) => c.required,
             WidgetConfig::RadioChoices(c) => c.required,
+            WidgetConfig::Checkboxes(c) => c.required,
+            _ => false,
         }
     }
 
@@ -45,6 +63,10 @@ impl WidgetConfig {
             WidgetConfig::OneToTen(c) => &c.text,
             WidgetConfig::Essay(c) => &c.text,
             WidgetConfig::RadioChoices(c) => &c.text,
+            WidgetConfig::Checkboxes(c) => &c.text,
+            WidgetConfig::TextBlock(c) => &c.text,
+            WidgetConfig::Header(c) => &c.text,
+            WidgetConfig::Separator => "",
         }
     }
 }
@@ -60,6 +82,9 @@ pub enum WidgetState {
     OneToTen(Option<u8>),
     Essay(String),
     RadioChoices(Option<String>),
+    Checkboxes(Vec<String>),
+    TextBlock,
+    Separator,
 }
 
 impl WidgetState {
@@ -68,6 +93,8 @@ impl WidgetState {
             WidgetState::OneToTen(Some(_)) => true,
             WidgetState::Essay(s) => !s.trim().is_empty(),
             WidgetState::RadioChoices(Some(_)) => true,
+            WidgetState::Checkboxes(v) => !v.is_empty(),
+            WidgetState::TextBlock | WidgetState::Separator => true,
             _ => false,
         }
     }
@@ -78,7 +105,8 @@ impl std::fmt::Display for WidgetState {
             WidgetState::OneToTen(Some(val)) => write!(f, "{}", val),
             WidgetState::RadioChoices(Some(choice)) => write!(f, "{}", choice),
             WidgetState::Essay(text) => write!(f, "{}", text),
-            WidgetState::OneToTen(None) | WidgetState::RadioChoices(None) => write!(f, ""),
+            WidgetState::Checkboxes(choices) => write!(f, "{}", choices.join(", ")),
+            _ => write!(f, ""),
         }
     }
 }

@@ -92,7 +92,7 @@ impl WidgetForm {
         }
 
         let final_config_path_str = relative_path.to_string_lossy().into_owned();
-        let config_path = utils::get_dll_directory().unwrap_or_default().join(final_config_path_str); // todo: temporary solution
+        let config_path = utils::get_dll_directory().unwrap_or_default().join(&final_config_path_str); // todo: temporary solution
 
         // Read the configuration file into a string
         let json_str = match fs::read_to_string(&config_path) {
@@ -126,7 +126,7 @@ impl WidgetForm {
         // Update the object's state
         self.config = config;
         self.state = state;
-        self.config_path = config_path_str.to_string();
+        self.config_path = final_config_path_str;
         self.opened = false; // Reset the flag so that the `if !self.opened` trigger works
     }
 
@@ -143,6 +143,10 @@ impl WidgetForm {
             WidgetConfig::OneToTen(_) => WidgetState::OneToTen(None),
             WidgetConfig::Essay(_) => WidgetState::Essay(String::new()),
             WidgetConfig::RadioChoices(_) => WidgetState::RadioChoices(None),
+            WidgetConfig::Checkboxes(_) => WidgetState::Checkboxes(Vec::new()),
+            WidgetConfig::TextBlock(_) => WidgetState::TextBlock,
+            WidgetConfig::Header(_) => WidgetState::TextBlock,
+            WidgetConfig::Separator => WidgetState::Separator,
         }).collect()
     }
 
@@ -173,7 +177,9 @@ impl WidgetForm {
         // Format answers as "question: answer"
         let mut answers = IndexMap::new();
         for (config, state) in self.config.widgets.iter().zip(self.state.iter()) {
-            answers.insert(config.text().to_string(), state.to_string());
+            if !matches!(config, WidgetConfig::TextBlock(_) | WidgetConfig::Header(_) | WidgetConfig::Separator) {
+                answers.insert(config.text().to_string(), state.to_string());
+            }
         }
 
         // Create the final structure
@@ -252,68 +258,118 @@ impl WidgetForm {
         Ok(())
     }
 
-    fn render_widgets(&mut self, ui: &mut egui::Ui) {
-        for (widget_config, widget_state) in self.config.widgets.iter().zip(self.state.iter_mut())
-        {
-            egui::Frame::NONE
-                .inner_margin(egui::Margin::symmetric(15, 0))
-                .show(ui, |ui| {
-                    ui.add_space(10.0);
-                    ui.vertical(|ui| {
-                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                        ui.horizontal_wrapped(|ui| {
-                            let heading = egui::RichText::new(widget_config.text()).strong();
-                            ui.label(heading);
-                            if widget_config.is_required() && !widget_state.is_answered() {
-                                ui.colored_label(egui::Color32::RED, " *");
-                            }
-                        });
+    /// Renders the title of a widget, like the question text and a required `*` mark.
+    fn draw_widget_header(ui: &mut egui::Ui, config: &WidgetConfig, state: &WidgetState) {
+        ui.add_space(10.0);
+        ui.vertical(|ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            ui.horizontal_wrapped(|ui| {
+                let heading = egui::RichText::new(config.text()).strong();
+                ui.label(heading);
+                if config.is_required() && !state.is_answered() {
+                    ui.colored_label(egui::Color32::RED, " *");
+                }
+            });
+        });
+        ui.add_space(5.0);
+    }
+
+    /// Renders the interactive part of a widget (the actual input controls).
+    fn draw_widget_body(ui: &mut egui::Ui, config: &WidgetConfig, state: &mut WidgetState) {
+        match (config, state) {
+            (WidgetConfig::OneToTen(config), WidgetState::OneToTen(value)) => {
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(&config.label_at_one);
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| { ui.label(&config.label_at_ten); },
+                        );
                     });
                     ui.add_space(5.0);
-                    match (widget_config, widget_state) {
-                        (WidgetConfig::OneToTen(config), WidgetState::OneToTen(value)) => {
-                            ui.vertical(|ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(&config.label_at_one);
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            ui.label(&config.label_at_ten);
-                                        },
-                                    );
-                                });
-                                ui.add_space(5.0);
-                                ui.columns(10, |columns| {
-                                    for i in 0..10 {
-                                        let num = (i + 1) as u8;
-                                        columns[i].vertical_centered(|ui| {
-                                            ui.selectable_value(
-                                                value,
-                                                Some(num),
-                                                (i + 1).to_string(),
-                                            );
-                                        });
-                                    }
-                                });
+                    ui.columns(10, |columns| {
+                        for i in 0..10 {
+                            let num = (i + 1) as u8;
+                            columns[i].vertical_centered(|ui| {
+                                ui.selectable_value(value, Some(num), (i + 1).to_string());
                             });
                         }
-                        (WidgetConfig::Essay(_config), WidgetState::Essay(text)) => {
-                            ui.add(
-                                egui::TextEdit::multiline(text)
-                                    .desired_width(f32::INFINITY)
-                                    .desired_rows(5),
-                            );
-                        }
-                        (WidgetConfig::RadioChoices(config), WidgetState::RadioChoices(selected)) => {
-                            ui.vertical(|ui| {
-                                for choice in &config.choices {
-                                    ui.radio_value(selected, Some(choice.clone()), choice);
-                                }
-                            });
-                        }
-                        _ => {}
+                    });
+                });
+            }
+            (WidgetConfig::Essay(_), WidgetState::Essay(text)) => {
+                ui.add(
+                    egui::TextEdit::multiline(text)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(5),
+                );
+            }
+            (WidgetConfig::RadioChoices(config), WidgetState::RadioChoices(selected)) => {
+                ui.vertical(|ui| {
+                    for choice in &config.choices {
+                        ui.radio_value(selected, Some(choice.clone()), choice);
                     }
                 });
+            }
+            (WidgetConfig::Checkboxes(config), WidgetState::Checkboxes(selected)) => {
+                ui.vertical(|ui| {
+                    for choice in &config.choices {
+                        let mut is_selected = selected.contains(choice);
+                        if ui.checkbox(&mut is_selected, choice.clone()).clicked() {
+                            if is_selected {
+                                selected.push(choice.clone());
+                            } else {
+                                selected.retain(|c| c != choice);
+                            }
+                        }
+                    }
+                });
+            }
+            // This function is only called for interactive widgets, so other arms are not needed.
+            _ => {}
+        }
+    }
+
+    /// The main rendering loop, now much cleaner and acting as a dispatcher.
+    fn render_widgets(&mut self, ui: &mut egui::Ui) {
+        for (widget_config, widget_state) in self.config.widgets.iter().zip(self.state.iter_mut()) {
+            match widget_config {
+                // Handle simple, visual-only widgets first.
+                WidgetConfig::Separator => {
+                    ui.add_space(100.0);
+                }
+                WidgetConfig::TextBlock(config) => {
+                    ui.add_space(5.0);
+                    egui::Frame::NONE
+                        .fill(egui::Color32::from_gray(40))
+                        .inner_margin(egui::Margin::same(10))
+                        .corner_radius(egui::CornerRadius::same(4))
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.label(egui::RichText::new(&config.text).strong());
+                            });
+                        });
+                    ui.add_space(15.0);
+                }
+                WidgetConfig::Header(config) => {
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::symmetric(15, 10))
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.label(egui::RichText::new(&config.text).heading());
+                            });
+                        });
+                }
+                // Handle all interactive widgets that have a header and a body.
+                _ => {
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::symmetric(15, 0))
+                        .show(ui, |ui| {
+                            Self::draw_widget_header(ui, widget_config, widget_state);
+                            Self::draw_widget_body(ui, widget_config, widget_state);
+                        });
+                }
+            }
             ui.separator();
         }
     }
@@ -344,7 +400,7 @@ impl WidgetForm {
                         }
                     }
                     ui.centered_and_justified(|ui| {
-                        ui.heading(&self.config.title);
+                        ui.label(egui::RichText::new(&self.config.title).heading().strong());
                     });
 
                 });
