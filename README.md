@@ -7,6 +7,9 @@
 
 The **Portal 2 Playtest Tool** is a server-side plugin for **Portal 2** and Source-based mods that lets developers and level designers collect structured feedback directly in-game. Playtesters do not need any additional software: feedback and bug reports are sent straight to your Discord server via the **Playtest Analysis Core** bot.
 
+> [!NOTE]
+> This overlay does **not** support Portal 2: Community Edition (P2:CE). For a detailed explanation, please see the [P2:CE Support Notice](P2CE_SUPPORT.md).
+
 ## ⚡ Quickstart
 
 1. Download `server_plugin.zip` from the [Releases](https://github.com/LaVashikk/portal2-playtest-tool/releases) page.
@@ -125,25 +128,21 @@ open_survey 1
 #### Open a custom survey file
 
 ```
+open_survey your_custom_survey
+open_survey your_custom_survey.json
 open_survey survey/your_custom_survey.json
 ```
 
-**Important constraints:**
-
-- The path must:
-  - Start with `survey/`
-  - End with `.json`
-- The JSON file must exist under:
-  ```
-  .../addons/survey/
-  ```
-- If the file is not found or JSON is invalid, the game may crash with a “file not found” or similar error.
+**Important constraints:** The JSON file must exist under:
+```
+.../addons/survey/
+```
 
 **Recommended workflow:**
 
 1. Place your custom survey file under `addons/survey/`.
 2. Validate the JSON via any online JSON validator.
-3. Test the survey by running `open_survey survey/your_file.json` manually in the console.
+3. Test the survey by running `open_survey survey/your_file` manually in the console.
 4. Only then hook the command up to map triggers.
 
 ## Survey Configuration Format
@@ -152,45 +151,18 @@ Survey forms are defined in JSON files under `addons/survey/`. The plugin reads 
 
 ### Basic structure
 
-```
+```json
 {
   "title": "Feedback & Bug Report",
   "widgets": [
     {
+      "type": "Header",
+      "text": "Section 1: Details"
+    },
+    {
       "type": "RadioChoices",
       "text": "Type of Feedback:",
-      "choices": [
-        "Bug (Something is broken)",
-        "Glitch / Oversight (Minor issue)",
-        "Suggestion (Improvement idea)",
-        "General Opinion / Feedback"
-      ],
-      "required": true
-    },
-    {
-      "type": "RadioChoices",
-      "text": "Category:",
-      "choices": [
-        "Gameplay / Mechanics",
-        "Level Design (Stuck spot, Out of bounds, Exploits)",
-        "Visuals / Models / Textures",
-        "Audio / Sound",
-        "UI / HUD",
-        "Text / Typos",
-        "Other"
-      ],
-      "required": true
-    },
-    {
-      "type": "RadioChoices",
-      "text": "Impact on Gameplay:",
-      "choices": [
-        "Blocker (Cannot progress)",
-        "Major (Significantly hinders gameplay)",
-        "Minor (Noticeable, but playable)",
-        "Cosmetic (Does not affect gameplay)",
-        "N/A (For suggestions)"
-      ],
+      "choices": [ "Bug", "Suggestion", "General Opinion" ],
       "required": true
     },
     {
@@ -207,25 +179,63 @@ Survey forms are defined in JSON files under `addons/survey/`. The plugin reads 
 - `title` *(string, optional)* – Title displayed at the top of the survey window.
 - `widgets` *(array, required)* – List of UI elements (questions/fields).
 
-Each item in `widgets` is a **widget** (question). Supported widget types are described below.
+Each item in `widgets` is a **widget**. Supported widget types are described below.
 
 ---
 
 ## Supported widget types
 
-### 1. `RadioChoices`
+### 1. `Header`
+
+Displays a centered title for creating sections within a form.
+
+```json
+{
+  "type": "Header",
+  "text": "Section 1: Overall Experience"
+}
+```
+
+- `type` – must be `"Header"`.
+- `text` *(string, required)* – The section title to display.
+
+### 2. `TextBlock`
+
+Displays a block of read-only, styled text. Useful for instructions or introductions.
+
+```json
+{
+  "type": "TextBlock",
+  "text": "Thank you for participating. Your feedback is crucial for improving the game."
+}
+```
+
+- `type` – must be `"TextBlock"`.
+- `text` *(string, required)* – The content of the text block.
+
+### 3. `Separator`
+
+Adds a blank block to visually separate sections of the form.
+
+```json
+{
+  "type": "Separator"
+}
+```
+- `type` – must be `"Separator"`. This widget has no other properties.
+
+### 4. `RadioChoices`
 
 Single-choice question with multiple options (radio buttons).
 
-```
+```json
 {
   "type": "RadioChoices",
   "text": "Type of Feedback:",
   "choices": [
     "Bug (Something is broken)",
     "Glitch / Oversight (Minor issue)",
-    "Suggestion (Improvement idea)",
-    "General Opinion / Feedback"
+    "Suggestion (Improvement idea)"
   ],
   "required": true
 }
@@ -236,13 +246,34 @@ Single-choice question with multiple options (radio buttons).
 - `choices` *(array of strings, required)* – List of options; exactly one can be selected.
 - `required` *(boolean, optional)* – If `true`, the player must select a value to submit the form.
 
-Use this for categories, types of issues, severity levels, etc.
+### 5. `Checkboxes`
 
-### 2. `Essay`
+Multiple-choice question where a user can select any number of options.
+
+```json
+{
+  "type": "Checkboxes",
+  "text": "Did you experience any of the following issues? (Select all that apply)",
+  "choices": [
+    "Frame rate drops",
+    "Visual glitches",
+    "Incorrect sounds",
+    "Game crash"
+  ],
+  "required": false
+}
+```
+
+- `type` – must be `"Checkboxes"`.
+- `text` *(string, required)* – Question text.
+- `choices` *(array of strings, required)* – List of options that can be selected.
+- `required` *(boolean, optional)* – If `true`, at least one option must be selected.
+
+### 6. `Essay`
 
 Multiline free-text input for detailed responses.
 
-```
+```json
 {
   "type": "Essay",
   "text": "Details (What happened? Steps to reproduce? What did you expect?):",
@@ -254,13 +285,11 @@ Multiline free-text input for detailed responses.
 - `text` *(string, required)* – Prompt for the text field.
 - `required` *(boolean, optional)* – If `true`, the field cannot be left empty.
 
-Use this for bug descriptions, open feedback, and explanations.
-
-### 3. `OneToTen`
+### 7. `OneToTen`
 
 Numeric rating question from 1 to 10, with labels at the ends.
 
-```
+```json
 {
   "type": "OneToTen",
   "text": "Please rate your enjoyment of this section.",
@@ -275,8 +304,6 @@ Numeric rating question from 1 to 10, with labels at the ends.
 - `label_at_one` *(string, optional but recommended)* – Label for the “1” end of the scale.
 - `label_at_ten` *(string, optional but recommended)* – Label for the “10” end of the scale.
 - `required` *(boolean, optional)* – If `true`, the player must select a value.
-
-Use this for satisfaction, difficulty, pacing, or enjoyment ratings.
 
 ---
 
@@ -299,7 +326,8 @@ Use this for satisfaction, difficulty, pacing, or enjoyment ratings.
 **Tips:**
 
 - Keep questions short and concrete.
-- Use `RadioChoices` for classification and quick answers.
+- Use `Header` and `Separator` to structure long forms.
+- Use `RadioChoices` and `Checkboxes` for classification and quick answers.
 - Use `Essay` for context and detailed explanations.
 - Use `OneToTen` for measuring player perception (difficulty, enjoyment, clarity).
 
