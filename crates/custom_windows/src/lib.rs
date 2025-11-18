@@ -48,6 +48,7 @@ pub fn regist_windows() -> Vec<Box<dyn Window + Send>> {
     log::info!("UI components initialized.");
 
     vec![
+        Box::new(OverlayText::default()),
         Box::new(toasts::ToastWindow::new()),
         Box::new(survey::SurveyWin::new()),
         Box::new(survey::BugReportWin::new("survey/bug_report.json")),
@@ -60,3 +61,37 @@ pub fn regist_windows() -> Vec<Box<dyn Window + Send>> {
 // ---------------------- \\
 mod survey;
 pub mod toasts;
+
+#[derive(Default)] // default text info
+pub struct OverlayText;
+impl Window for OverlayText {
+    fn name(&self) -> &'static str { "Overlay Text" }
+    fn toggle(&mut self) {}
+    fn is_open(&self) -> bool { true }
+
+    fn draw(&mut self, ctx: &egui::Context, shared_state: &mut SharedState, _engine: &Engine) {
+        let screen_rect = ctx.screen_rect();
+        let painter = ctx.debug_painter();
+
+        if shared_state.is_overlay_focused {
+            let text = "Focus Captured; Press F3 to toggle";
+            let font_id = egui::FontId::proportional(24.0);
+            let text_color = egui::Color32::WHITE;
+            let shadow_color = egui::Color32::BLACK;
+            let pos = egui::pos2(screen_rect.center().x, screen_rect.bottom() - 50.0);
+            let anchor = egui::Align2::CENTER_BOTTOM;
+
+            // Shadow
+            painter.text(
+                pos + egui::vec2(2.0, 2.0),
+                anchor,
+                text,
+                font_id.clone(),
+                shadow_color,
+            );
+
+            // Foreground text
+            painter.text(pos, anchor, text, font_id, text_color);
+        }
+    }
+}
