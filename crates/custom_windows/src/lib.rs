@@ -14,7 +14,7 @@ pub struct SharedState {
 
 /// Trait that every window must implement.
 #[allow(dead_code)]
-pub trait Window: std::fmt::Debug { //? todo: for debug
+pub trait Window {
     /// The name of the window, used for the title.
     fn name(&self) -> &'static str;
 
@@ -45,6 +45,7 @@ pub trait Window: std::fmt::Debug { //? todo: for debug
 /// application calls it to populate the `UiManager`'s window list.
 pub fn regist_windows() -> Vec<Box<dyn Window + Send>> {
     survey::init_survey();
+    log::info!("UI components initialized.");
 
     vec![
         Box::new(toasts::ToastWindow::new()),

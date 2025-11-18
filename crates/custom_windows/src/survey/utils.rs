@@ -33,21 +33,4 @@ pub fn get_dll_directory() -> Option<std::path::PathBuf> {
     }
 }
 
-pub fn show_error_and_panic(caption: &str, text: &str) -> ! {
-    use std::ffi::CString;
-    use windows::core::PCSTR;
-    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxA, MB_OK, MB_ICONERROR};
 
-    log::error!("ERROR {}: {}", caption, text);
-    let lp_text = CString::new(text).unwrap();
-    let lp_caption = CString::new(caption).unwrap();
-    unsafe {
-        MessageBoxA(
-            None,
-            PCSTR(lp_text.as_ptr() as *const u8),
-            PCSTR(lp_caption.as_ptr() as *const u8),
-            MB_OK | MB_ICONERROR,
-        );
-    }
-    panic!("{}", text);
-}

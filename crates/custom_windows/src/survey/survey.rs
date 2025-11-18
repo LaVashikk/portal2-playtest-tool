@@ -43,12 +43,19 @@ impl Window for SurveyWin {
             let is_custom_survey_requested = !target_survey_path.chars().all(|c| c.is_ascii_digit());
             if is_custom_survey_requested {
                 if self.form.config_path != target_survey_path {
-                    self.form.load_form(&target_survey_path);
+                    if self.form.load_form(&target_survey_path).is_err() {
+                        // Failed to load the requested survey, so we close the window
+                        let kv = engine.cvar_system().find_var("open_survey").unwrap();
+                        kv.set_value_int(0); // todo: use `reset` later
+                        kv.set_value_str("0");
+                        return;
+                    }
                 }
             }
-            //
+            // 
             else if self.form.config_path != DEFAULT_SURVEY {
-                self.form.load_form(DEFAULT_SURVEY);
+                // The default survey is expected to always be valid.
+                self.form.load_form(DEFAULT_SURVEY).unwrap();
             }
 
 
@@ -75,8 +82,8 @@ impl Window for SurveyWin {
                     self.form.reset_state();
                 }
                 Err(e) => {
-                    log::error!("Failed to save survey: {}", e);
-                    // TODO: Display a modal window with an error?
+                    log::error!("Failed to save survey to disk.");
+                    log::debug!("Error saving survey: {}", e);
                 }
             }
         }

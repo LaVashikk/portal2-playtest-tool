@@ -103,7 +103,8 @@ impl Window for BugReportWin {
                 FormAction::Submitted => {
                     // The Submit button was clicked
                     if let Err(e) = self.save_form_results(engine) {
-                        log::error!("Failed to save bug report: {}", e);
+                        log::error!("Failed to save bug report to disk.");
+                        log::debug!("Error saving bug report: {}", e);
                     }
 
                     self.close_window();

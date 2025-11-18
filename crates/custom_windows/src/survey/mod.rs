@@ -44,12 +44,14 @@ pub fn get_request_status() -> String {
 pub fn init_survey() {
     // Reads 'SURVEY/config.json' and initializes the global mod-key
     let path = utils::get_dll_directory().unwrap_or_default().join("survey/config.json"); // todo: temporary solution
-    let key = std::fs::read_to_string(path)
+    let key = std::fs::read_to_string(path.clone())
         .ok()
         .and_then(|s| serde_json::from_str::<ClientConfig>(&s).ok())
         .map(|c| c.mod_key)
         .unwrap_or_else(|| {
-            log::error!("Could not read or parse survey/config.json. Mod-key will be empty.");
+            log::warn!(
+                "Could not read or parse 'survey/config.json'. Surveys will be offline.",
+            );
             String::new()
         });
 
@@ -77,13 +79,14 @@ pub struct WidgetForm {
 impl WidgetForm {
     pub fn new(config_path: &str) -> Self {
         let mut app = Self::default();
-        app.load_form(config_path);
+        app.load_form(config_path)
+            .expect("Failed to load a default survey. This is a critical error.");
         app
     }
 
     /// Loads and initializes a FORM from a configuration file.
     /// This method resets all previous states.
-    fn load_form(&mut self, config_path_str: &str) {
+    pub fn load_form(&mut self, config_path_str: &str) -> Result<(), String> {
         let mut relative_path = std::path::PathBuf::from(config_path_str);
         if relative_path.extension().is_none() {
             relative_path.set_extension("json");
@@ -99,12 +102,9 @@ impl WidgetForm {
         let json_str = match fs::read_to_string(&config_path) {
             Ok(s) => s,
             Err(e) => {
-                let error_text = format!(
-                    "Failed to read configuration file '{}':\n\n{}",
-                    config_path.display(),
-                    e
-                );
-                utils::show_error_and_panic("File Read Error", &error_text); // TODO: LMAO GUYS IM COOCKED
+                let err_msg = format!("Failed to read survey file '{}': {}", config_path.display(), e);
+                log::error!("{}", err_msg);
+                return Err(err_msg);
             }
         };
 
@@ -112,12 +112,9 @@ impl WidgetForm {
         let config: FormConfig = match serde_json::from_str(&json_str) {
             Ok(c) => c,
             Err(e) => {
-                let error_text = format!(
-                    "Failed to parse JSON from file '{}':\n\n{}",
-                    config_path.display(),
-                    e
-                );
-                utils::show_error_and_panic("Configuration Error", &error_text);
+                let err_msg = format!("Failed to parse survey file '{}': {}", config_path.display(), e);
+                log::error!("{}", err_msg);
+                return Err(err_msg);
             }
         };
 
@@ -129,6 +126,7 @@ impl WidgetForm {
         self.state = state;
         self.config_path = final_config_path_str;
         self.opened = false; // Reset the flag so that the `if !self.opened` trigger works
+        Ok(())
     }
 
     fn are_all_required_filled(&self) -> bool {
@@ -225,8 +223,8 @@ impl WidgetForm {
         let body_for_thread = json_data;
 
         if key.is_empty() {
-            log::warn!("Submission failed: moderator key is not configured.");
-            return Ok(())
+            log::warn!("Failed to send survey to server: The mod-key is not configured.");
+            return Ok(());
         }
 
         set_request_status("sending...");
@@ -237,22 +235,31 @@ impl WidgetForm {
                 .send_string(&body_for_thread);
 
             match result {
-                Ok(response) if response.status() == 200 => {
+                Ok(_response) => {
                     set_request_status("sent successfully");
-                    log::info!("Submission successful, server responded with 200 OK.");
+                    log::info!("Survey submitted successfully!");
                 }
-                Ok(response) => {
-                    let status = response.status();
-                    set_request_status(format!("error: server responded with {}", status));
-                    log::error!("Submission failed, server responded with status: {}", status);
-                }
-                Err(ureq::Error::Status(code, _)) => {
+                Err(ureq::Error::Status(code, response)) => {
                     set_request_status(format!("error: HTTP {}", code));
-                    log::error!("Submission failed with HTTP status: {}", code);
+                    let response_text = response.into_string().unwrap_or_default();
+                    let user_message = match code {
+                        401 | 403 => "Survey submission failed: Invalid Moderator Key.".to_string(),
+                        502 => "Survey submission failed: The server is temporarily unavailable (Bad Gateway).".to_string(),
+                        500..=599 => format!("Survey submission failed: The server encountered an internal error (Code: {}).", code),
+                        400..=499 => format!("Survey submission failed: There was a problem with the request (Code: {}). Please report this.", code),
+                        _ => format!("Survey submission failed with an unexpected error (Code: {}). Please report this.", code),
+                    };
+                    log::error!("{}", user_message);
+                    log::debug!(
+                        "Survey submission failed with status code {}. Response: {}",
+                        code,
+                        response_text
+                    );
                 }
-                Err(e) => {
-                    set_request_status(format!("error: network issue ({})", e));
-                    log::error!("Submission failed with transport error: {}", e);
+                Err(e) => { // This is for transport errors (network issues)
+                    set_request_status("error: network issue".to_string());
+                    log::error!("Survey submission failed: A network error occurred. Please check your connection.");
+                    log::debug!("Survey submission transport error: {}", e);
                 }
             }
         });
