@@ -3,7 +3,6 @@
 //! This crate is responsible for defining the UI of the overlay. It contains the `Window` trait,
 //! which every window must implement, and the `regist_windows` function, which assembles and
 //! returns a collection of all active UI windows.
-use egui::Context;
 use source_sdk::Engine;
 
 /// Shared state accessible to all windows.
@@ -48,6 +47,7 @@ pub fn regist_windows() -> Vec<Box<dyn Window + Send>> {
     survey::init_survey();
 
     vec![
+        Box::new(toasts::ToastWindow::new()),
         Box::new(survey::SurveyWin::new()),
         Box::new(survey::BugReportWin::new("survey/bug_report.json")),
     ]
@@ -58,35 +58,4 @@ pub fn regist_windows() -> Vec<Box<dyn Window + Send>> {
 //      YOUR WINDOWS      \\
 // ---------------------- \\
 mod survey;
-
-#[derive(Debug, Default)]
-pub struct OverlayText;
-impl Window for OverlayText {
-    fn name(&self) -> &'static str { "Overlay Text" }
-    fn toggle(&mut self) {}
-    fn is_open(&self) -> bool { true }
-
-    fn draw(&mut self, ctx: &Context, _shared_state: &mut SharedState, _engine: &Engine) {
-        let screen_rect = ctx.screen_rect();
-        // Get the current network status from the survey module.
-        let status = survey::get_request_status();
-
-        let debug_text = format!(
-            "DEBUG INFO:\n----------------------\n\
-                keyboard: {}\n\
-                pointer: {}\n\
-                request_status: {}",
-            ctx.wants_keyboard_input(),
-            ctx.wants_pointer_input(),
-            status
-        );
-
-        ctx.debug_painter().text(
-            egui::pos2(screen_rect.left() + 10.0, screen_rect.bottom() - 10.0),
-            egui::Align2::LEFT_BOTTOM,
-            debug_text,
-            egui::FontId::proportional(20.0),
-            egui::Color32::GRAY,
-        );
-    }
-}
+pub mod toasts;
