@@ -13,16 +13,19 @@ mod memory;
 mod client;
 mod cvar;
 pub mod input_system;
+pub mod game_events;
 
 use crate::input_system::IInputStackSystem;
 pub use client::IVEngineClient;
 pub use cvar::{ICvar, CvarFlags, ConVar, ConCommandBase};
+pub use game_events::IGameEventManager2;
 
 /// A struct that holds pointers to all the game engine interfaces we need.
 pub struct Engine {
     client: IVEngineClient,
     input_stack_system: IInputStackSystem,
     icvar: ICvar,
+    game_event_manager: IGameEventManager2,
 }
 
 /// # Safety
@@ -45,6 +48,10 @@ impl Engine {
     /// Returns an immutable reference to the ICvar interface.
     pub fn cvar_system(&self) -> &ICvar {
         &self.icvar
+    }
+
+    pub fn game_event_manager(&self) -> &IGameEventManager2 {
+        &self.game_event_manager
     }
 }
 
@@ -79,6 +86,13 @@ impl Engine {
             unsafe { interfaces::find_interface::<c_void>(b"vstdlib.dll\0", b"VEngineCvar007\0") };
         if icvar_this.is_null() {
             return Err("Failed to find ICvar interface pointer".to_string());
+        }
+
+        let game_event_manager_this = unsafe {
+            interfaces::find_interface::<c_void>(b"engine.dll\0", b"GAMEEVENTSMANAGER002\0")
+        };
+        if game_event_manager_this.is_null() {
+            return Err("Failed to find IGameEventManager2 interface pointer".to_string());
         }
 
         // --- Get the memory ranges of the modules to scan. ---
@@ -167,10 +181,18 @@ impl Engine {
             find_var: find_fn!(vstdlib_mem, vstdlib_base, FIND_VAR_PATTERN, FIND_VAR_MASK, "FindVar"),
         };
 
+        let game_event_manager = IGameEventManager2 {
+            this: game_event_manager_this as *mut _,
+            add_listener: get_vfunc!(game_event_manager_this, 3),
+            remove_listener: get_vfunc!(game_event_manager_this, 5),
+            listener: game_events::create_master_listener(),
+        };
+
         Ok(Engine {
             client,
             input_stack_system,
             icvar,
+            game_event_manager,
         })
     }
 }

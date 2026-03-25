@@ -4,7 +4,7 @@
 //! which every window must implement, and the `regist_windows` function, which assembles and
 //! returns a collection of all active UI windows.
 use egui::Context;
-use source_sdk::Engine;
+use source_sdk::{Engine, game_events::{GameEvent, EventCallback}};
 
 /// Shared state accessible to all windows.
 #[derive(Debug, Default, Clone)]
@@ -43,12 +43,24 @@ pub trait Window {
 ///
 /// This function is the designated discovery point for UI components. The core
 /// application calls it to populate the `UiManager`'s window list.
-pub fn regist_windows() -> Vec<Box<dyn Window + Send>> {
+pub fn regist_windows(engine: &Engine) -> Vec<Box<dyn Window + Send>> {
+   regist_events(engine);
+
     vec![
         Box::new(OverlayText::default()),
         Box::new(engine_api_demo::EngineApiDemoWindow::default()),
         Box::new(fogui::FogWindow::default()),
     ]
+}
+
+fn regist_events(engine: &Engine) {
+    // https://developer.valvesoftware.com/wiki/Logic_eventlistener
+    engine.game_event_manager().listen("server_spawn", |event| {
+        log::warn!("started. Name: {}, os: {}, hostname: {}", event.get_string("mapname", ""), event.get_string("os", ""), event.get_string("hostname", ""));
+    });
+    engine.game_event_manager().listen("server_shutdown", |event| {
+        log::warn!("stopped: {}", event.get_string("reason", ""));
+    });
 }
 
 

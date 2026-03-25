@@ -52,7 +52,7 @@ unsafe impl Send for SendableContext {}
 impl UiManager {
     pub fn new(engine_instance: source_sdk::Engine) -> Self {
         Self {
-            windows: custom_windows::regist_windows(),
+            windows: custom_windows::regist_windows(&engine_instance),
             shared_state: custom_windows::SharedState::default(),
             engine_instance,
             is_focused: false,
@@ -267,9 +267,15 @@ pub static CALLBACKS: Callbacks = Callbacks {
 /// Restores original WndProc and clears overlay state.
 /// Safe to call multiple times; no-op if nothing to restore.
 pub fn uninstall_overlay() {
-    #![allow(static_mut_refs)]
+    if let Some(app_mutex) = OVERLAY_RUNTIME.get() {
+        if let Ok(app) = app_mutex.try_lock() {
+            app.engine_instance.game_event_manager().shutdown_all_listeners();
+        }
+    }
+
     unsafe {
         if let Some(SyncHWND(hwnd)) = FOCUS_HWND.get().copied() {
+            #[allow(static_mut_refs)]
             if let Some(old) = O_WNDPROC.take() {
                 // Restore original WndProc
                 let _ = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, old.unwrap() as usize as i32);
