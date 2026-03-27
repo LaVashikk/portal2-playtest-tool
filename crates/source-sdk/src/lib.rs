@@ -11,6 +11,7 @@ mod interfaces;
 mod memory;
 
 mod server;
+mod server_tools;
 mod client;
 mod cvar;
 pub mod input_system;
@@ -18,6 +19,7 @@ pub mod game_events;
 
 use crate::input_system::IInputStackSystem;
 use crate::server::IVEngineServer;
+use crate::server_tools::IServerTools;
 pub use client::IVEngineClient;
 pub use cvar::{ICvar, CvarFlags, ConVar, ConCommandBase};
 pub use game_events::IGameEventManager2;
@@ -29,6 +31,7 @@ pub struct Engine {
     icvar: ICvar,
     game_event_manager: IGameEventManager2,
     engine_server: IVEngineServer,
+    server_tools: IServerTools,
 }
 
 /// # Safety
@@ -61,7 +64,10 @@ impl Engine {
         &self.engine_server
     }
 
-   
+    pub fn server_tools(&self) -> &IServerTools {
+        &self.server_tools
+    }
+
 }
 
 
@@ -111,6 +117,12 @@ impl Engine {
             return Err("Failed to find IVEngineServer interface pointer.".to_string());
         }
 
+        let server_tools_this = unsafe {
+            interfaces::find_interface::<c_void>(b"server.dll\0", b"VSERVERTOOLS001\0")
+        };
+        if server_tools_this.is_null() {
+            return Err("Failed to find IServerTools interface pointer.".to_string());
+        }
 
         // --- Get the memory ranges of the modules to scan. ---
         let engine_dll = unsafe { memory::get_module_memory_range(b"engine.dll\0") };
@@ -353,12 +365,40 @@ impl Engine {
             get_client_cross_play_platform: get_vfunc!(engine_server_this, 143),
         };
 
+
+        let server_tools = IServerTools {
+            this: server_tools_this as *mut _,
+            get_iserver_entity: get_vfunc!(server_tools_this, 1),
+            snap_player_to_position: get_vfunc!(server_tools_this, 2),
+            get_player_position: get_vfunc!(server_tools_this, 3),
+            set_player_fov: get_vfunc!(server_tools_this, 4),
+            get_player_fov: get_vfunc!(server_tools_this, 5),
+            is_in_no_clip_mode: get_vfunc!(server_tools_this, 6),
+            first_entity: get_vfunc!(server_tools_this, 7),
+            next_entity: get_vfunc!(server_tools_this, 8),
+            find_entity_by_hammer_id: get_vfunc!(server_tools_this, 9),
+            get_key_value: get_vfunc!(server_tools_this, 10),
+            set_key_value_str: get_vfunc!(server_tools_this, 11),
+            set_key_value_flt: get_vfunc!(server_tools_this, 12),
+            set_key_value_vec: get_vfunc!(server_tools_this, 13),
+            create_entity_by_name: get_vfunc!(server_tools_this, 14),
+            dispatch_spawn: get_vfunc!(server_tools_this, 15),
+            destroy_entity_by_hammer_id: get_vfunc!(server_tools_this, 16),
+            respawn_entities_with_edits: get_vfunc!(server_tools_this, 17),
+            reload_particle_defintions: get_vfunc!(server_tools_this, 18),
+            add_origin_to_pvs: get_vfunc!(server_tools_this, 19),
+            move_engine_view_to: get_vfunc!(server_tools_this, 20),
+            remove_entity: get_vfunc!(server_tools_this, 21),
+        };
+
+
         Ok(Engine {
             client,
             input_stack_system,
             icvar,
             game_event_manager,
             engine_server,
+            server_tools,
         })
     }
 }
