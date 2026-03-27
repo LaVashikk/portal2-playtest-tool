@@ -70,7 +70,7 @@ impl Engine {
         &self.server_tools
     }
 
-    pub fn entities(&self) -> Entities {
+    pub fn entities(&self) -> Entities<'_> {
         Entities::new(self.server_tools())
     }
 }
