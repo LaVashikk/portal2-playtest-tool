@@ -1,4 +1,4 @@
-//! source-sdk: A crate for interacting with the Source engine's C++ interfaces.
+//! portal2-sdk: A crate for interacting with the Source engine's C++ interfaces.
 //!
 //! This crate provides a safe and ergonomic API for interacting with the Source engine's C++ interfaces.
 //! It uses a signature-based approach to find the interfaces and their methods in memory.

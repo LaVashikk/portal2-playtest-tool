@@ -31,10 +31,10 @@ unsafe impl Send for SyncHWND {}
 unsafe impl Sync for SyncHWND {}
 static FOCUS_HWND: OnceLock<SyncHWND> = OnceLock::new();
 
-/// Overlay controller that owns custom_windows windows and talks to source-sdk.
+/// Overlay controller that owns custom_windows windows and talks to portal2-sdk.
 pub struct UiManager {
     windows: Vec<Box<dyn custom_windows::Window + Send>>,
-    engine_instance: source_sdk::Engine,
+    engine_instance: portal2_sdk::Engine,
     input_context: Option<SendableContext>,
     cursor_visible_in_gui: bool,
     egui_wants_keyboard: bool,
@@ -44,11 +44,11 @@ pub struct UiManager {
     pub is_focused: bool,
 }
 
-pub struct SendableContext(pub *mut source_sdk::input_system::InputContextT);
+pub struct SendableContext(pub *mut portal2_sdk::input_system::InputContextT);
 unsafe impl Send for SendableContext {}
 
 impl UiManager {
-    pub fn new(engine_instance: source_sdk::Engine) -> Self {
+    pub fn new(engine_instance: portal2_sdk::Engine) -> Self {
         Self {
             windows: custom_windows::regist_windows(&engine_instance),
             shared_state: custom_windows::SharedState::default(),
@@ -149,7 +149,7 @@ impl UiManager {
 }
 
 fn initialize_engine_and_app() {
-    match source_sdk::Engine::initialize() {
+    match portal2_sdk::Engine::initialize() {
         Ok(instance) => {
             if OVERLAY_RUNTIME.set(Mutex::new(UiManager::new(instance))).is_err() {
                 log::error!("UiManager was already initialized! This is a bug.");

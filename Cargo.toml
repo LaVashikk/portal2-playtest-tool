@@ -15,7 +15,7 @@ members = [
     "crates/custom_windows",
 
     # Source Engine FFI bindings
-    "crates/source-sdk",
+    "crates/portal2-sdk",
 ]
 default-members = ["crates/injector_d3d9_proxy"]
 
@@ -33,7 +33,7 @@ egui = "0.31.1"
 log = "0.4"
 anyhow = "1.0"
 egui_backend = { path = "crates/egui_backend" }
-source-sdk = { path = "crates/source-sdk" }
+portal2-sdk = { path = "crates/portal2-sdk" }
 custom_windows = { path = "crates/custom_windows" }
 d3d9_hook_core = { path = "crates/d3d9_hook_core" }
 overlay_runtime = { path = "crates/overlay_runtime" }

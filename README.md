@@ -151,7 +151,7 @@ crates/
 ├── hook_core/           # D3D9 hooking core
 ├── overlay_runtime/     # Manages UI state, input, and rendering loop
 ├── egui_backend/        # The egui rendering backend for D3D9
-├── source_sdk/          # Safe bindings to Source Engine functions
+├── portal2_sdk/          # Safe bindings to Source Engine functions
 └── custom_windows/      # **YOUR CODE GOES HERE! 🎯**
 ```
 

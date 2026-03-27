@@ -88,7 +88,7 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "log",
- "source-sdk",
+ "portal2-sdk",
  "windows",
 ]
 
@@ -296,8 +296,8 @@ dependencies = [
  "egui",
  "egui_backend",
  "log",
+ "portal2-sdk",
  "simplelog",
- "source-sdk",
  "windows",
 ]
 
@@ -331,6 +331,15 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-targets 0.52.6",
+]
+
+[[package]]
+name = "portal2-sdk"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "log",
+ "windows",
 ]
 
 [[package]]
@@ -414,15 +423,6 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
-
-[[package]]
-name = "source-sdk"
-version = "0.1.0"
-dependencies = [
- "bitflags",
- "log",
- "windows",
-]
 
 [[package]]
 name = "syn"

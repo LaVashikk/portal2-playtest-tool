@@ -52,7 +52,7 @@ portal2-rust-overlay/
 │   ├── hook_core/                # Core D3D9 hooking logic
 │   ├── overlay_runtime/          # UI management & rendering
 │   ├── egui_backend/             # Egui-D3D9 integration
-│   ├── source_sdk/               # Source Engine FFI bindings
+│   ├── portal2_sdk/               # Source Engine FFI bindings
 │   └── custom_windows/           # ← YOUR UI CODE GOES HERE
 ├── docs/                          # Additional documentation
 ├── Cargo.toml                     # Workspace configuration
@@ -60,7 +60,7 @@ portal2-rust-overlay/
 ```
 
 -   **`custom_windows`**: This is your primary workspace. Add all your UI windows here.
--   **`source_sdk`**: Contains safe bindings to Source Engine functions. Feel free to extend this to access more engine features.
+-   **`portal2_sdk`**: Contains safe bindings to Source Engine functions. Feel free to extend this to access more engine features.
 
 ## Development Workflow
 
@@ -72,7 +72,7 @@ Create a new file, for example `crates/custom_windows/src/my_window.rs`:
 
 ```rust
 use crate::{Window, SharedState};
-use source_sdk::Engine;
+use portal2_sdk::Engine;
 use egui::Context;
 
 #[derive(Debug, Default)]
@@ -337,7 +337,7 @@ impl MyWindow {
 - 📋 [Open an Issue](https://github.com/LaVashikk/portal2-rust-overlay/issues/new)
 - 💬 [Start a Discussion](https://github.com/LaVashikk/portal2-rust-overlay/discussions)
 - 📚 [Read egui docs](https://docs.rs/egui)
-- 🎮 [Source SDK Wiki](https://developer.valvesoftware.com/wiki/Source_SDK)
+- 🎮 [Source SDK Wiki](https://developer.valvesoftware.com/wiki/portal2_sdk)
 
 ---
 

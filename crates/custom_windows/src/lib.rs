@@ -4,7 +4,7 @@
 //! which every window must implement, and the `regist_windows` function, which assembles and
 //! returns a collection of all active UI windows.
 use egui::Context;
-use source_sdk::{Engine, game_events::{GameEvent, EventCallback}};
+use portal2_sdk::Engine;
 
 /// Base font scale factor
 pub const BASE_TEXT_SCALE: f32 = 1.25;
