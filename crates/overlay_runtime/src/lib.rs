@@ -21,8 +21,6 @@ use windows::Win32::Graphics::Direct3D9::IDirect3DDevice9;
 pub use d3d9_hook_core::Callbacks;
 pub mod logger;
 
-const TEXT_SCALE: f32 = 1.25;
-
 pub static OVERLAY_RUNTIME: OnceLock<Mutex<UiManager>> = OnceLock::new();
 static EGUI_RENDERER: OnceLock<Mutex<egui_backend::EguiDx9Lite>> = OnceLock::new();
 static mut O_WNDPROC: Option<WNDPROC> = None;
@@ -33,10 +31,10 @@ unsafe impl Send for SyncHWND {}
 unsafe impl Sync for SyncHWND {}
 static FOCUS_HWND: OnceLock<SyncHWND> = OnceLock::new();
 
-/// Overlay controller that owns custom_windows windows and talks to source-sdk.
+/// Overlay controller that owns custom_windows windows and talks to portal2-sdk.
 pub struct UiManager {
     windows: Vec<Box<dyn custom_windows::Window + Send>>,
-    engine_instance: source_sdk::Engine,
+    engine_instance: portal2_sdk::Engine,
     input_context: Option<SendableContext>,
     cursor_visible_in_gui: bool,
     egui_wants_keyboard: bool,
@@ -46,13 +44,13 @@ pub struct UiManager {
     pub is_focused: bool,
 }
 
-pub struct SendableContext(pub *mut source_sdk::input_system::InputContextT);
+pub struct SendableContext(pub *mut portal2_sdk::input_system::InputContextT);
 unsafe impl Send for SendableContext {}
 
 impl UiManager {
-    pub fn new(engine_instance: source_sdk::Engine) -> Self {
+    pub fn new(engine_instance: portal2_sdk::Engine) -> Self {
         Self {
-            windows: custom_windows::regist_windows(),
+            windows: custom_windows::regist_windows(&engine_instance),
             shared_state: custom_windows::SharedState::default(),
             engine_instance,
             is_focused: false,
@@ -64,13 +62,17 @@ impl UiManager {
     }
 
     pub(crate) fn draw_ui(&mut self, ctx: &egui::Context) {
+        use custom_windows::BASE_TEXT_SCALE;
+
+        // Apply zoom factor to text styles
+        let zoom = ctx.zoom_factor();
         let mut style = (*ctx.style()).clone();
         style.text_styles = [
-            (egui::TextStyle::Heading, egui::FontId::new(18.0*TEXT_SCALE, egui::FontFamily::Proportional)),
-            (egui::TextStyle::Body, egui::FontId::new(12.5*TEXT_SCALE, egui::FontFamily::Proportional)),
-            (egui::TextStyle::Monospace, egui::FontId::new(12.0*TEXT_SCALE, egui::FontFamily::Proportional)),
-            (egui::TextStyle::Button, egui::FontId::new(12.5*TEXT_SCALE, egui::FontFamily::Proportional)),
-            (egui::TextStyle::Small, egui::FontId::new(9.0*TEXT_SCALE, egui::FontFamily::Proportional)),
+            (egui::TextStyle::Heading, egui::FontId::new(18.0 * BASE_TEXT_SCALE * zoom, egui::FontFamily::Proportional)),
+            (egui::TextStyle::Body, egui::FontId::new(12.5 * BASE_TEXT_SCALE * zoom, egui::FontFamily::Proportional)),
+            (egui::TextStyle::Monospace, egui::FontId::new(12.0 * BASE_TEXT_SCALE * zoom, egui::FontFamily::Proportional)),
+            (egui::TextStyle::Button, egui::FontId::new(12.5 * BASE_TEXT_SCALE * zoom, egui::FontFamily::Proportional)),
+            (egui::TextStyle::Small, egui::FontId::new(9.0 * BASE_TEXT_SCALE * zoom, egui::FontFamily::Proportional)),
         ].into();
         ctx.set_style(style);
 
@@ -147,7 +149,7 @@ impl UiManager {
 }
 
 fn initialize_engine_and_app() {
-    match source_sdk::Engine::initialize() {
+    match portal2_sdk::Engine::initialize() {
         Ok(instance) => {
             if OVERLAY_RUNTIME.set(Mutex::new(UiManager::new(instance))).is_err() {
                 log::error!("UiManager was already initialized! This is a bug.");
@@ -184,7 +186,7 @@ pub fn on_device_created(hwnd: HWND, device: &IDirect3DDevice9) {
             O_WNDPROC = Some(std::mem::transmute(SetWindowLongPtrW(
                 hwnd,
                 GWLP_WNDPROC,
-                hooked_wndproc as usize as i32,
+                hooked_wndproc as *const () as usize as i32,
             )));
         }
     });
@@ -267,9 +269,15 @@ pub static CALLBACKS: Callbacks = Callbacks {
 /// Restores original WndProc and clears overlay state.
 /// Safe to call multiple times; no-op if nothing to restore.
 pub fn uninstall_overlay() {
-    #![allow(static_mut_refs)]
+    if let Some(app_mutex) = OVERLAY_RUNTIME.get() {
+        if let Ok(app) = app_mutex.try_lock() {
+            app.engine_instance.game_event_manager().shutdown_all_listeners();
+        }
+    }
+
     unsafe {
         if let Some(SyncHWND(hwnd)) = FOCUS_HWND.get().copied() {
+            #[allow(static_mut_refs)]
             if let Some(old) = O_WNDPROC.take() {
                 // Restore original WndProc
                 let _ = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, old.unwrap() as usize as i32);

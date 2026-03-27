@@ -19,7 +19,7 @@ impl SurveyWin {
 impl Window for SurveyWin {
     fn name(&self) -> &'static str { "Survey" }
 
-    fn is_should_render(&self, _shared_state: &SharedState, engine: &source_sdk::Engine) -> bool {
+    fn is_should_render(&self, _shared_state: &SharedState, engine: &portal2_sdk::Engine) -> bool {
         let cvar_system = engine.cvar_system();
         match cvar_system.find_var("open_survey") {
             Some(val) => !val.get_string().chars().all(|c| c.is_ascii_digit()) || val.get_int() != 0,
@@ -31,7 +31,7 @@ impl Window for SurveyWin {
         &mut self,
         ctx: &egui::Context,
         shared_state: &mut SharedState,
-        engine: &source_sdk::Engine,
+        engine: &portal2_sdk::Engine,
     ) {
         // This block triggers after `load_form` or on the first opening
         if !self.is_opened {
@@ -52,7 +52,7 @@ impl Window for SurveyWin {
                     }
                 }
             }
-            // 
+            //
             else if self.form.config_path != DEFAULT_SURVEY {
                 // The default survey is expected to always be valid.
                 self.form.load_form(DEFAULT_SURVEY).unwrap();

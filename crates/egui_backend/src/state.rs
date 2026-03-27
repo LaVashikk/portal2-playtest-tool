@@ -84,11 +84,8 @@ impl DxState {
     }
 }
 
-// --- НОВАЯ, ИСПРАВЛЕННАЯ ВЕРСИЯ ---
 impl Drop for DxState {
     fn drop(&mut self) {
-        // Восстанавливаем только то, что state block не сохраняет (матрицы),
-        // а затем применяем сам state block, который восстановит всё остальное.
         unsafe {
             expect!(
                 self.dev
@@ -104,9 +101,6 @@ impl Drop for DxState {
                 "unable to reset projection matrix"
             );
 
-            // Код, связанный с RenderTarget и StretchRect, полностью удален.
-
-            // Восстанавливаем все остальные состояния (шейдеры, FVF, состояния рендера и т.д.)
             expect!(
                 self.original_state.Apply(),
                 "unable to re-apply captured state"
@@ -115,13 +109,11 @@ impl Drop for DxState {
     }
 }
 
-// --- НОВАЯ, ИСПРАВЛЕННАЯ ВЕРСИЯ ---
 fn setup_state(
     dev: &IDirect3DDevice9,
     viewport: D3DVIEWPORT9,
 ) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
-        // Устанавливаем только viewport. Не трогаем рендер-таргеты.
         dev.SetViewport(&viewport)?;
 
         // set up fvf
@@ -175,8 +167,7 @@ fn setup_state(
         dev.SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE.0 as _)?;
         dev.SetRenderState(D3DRS_ALPHABLENDENABLE, true as _)?;
         dev.SetRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD.0 as _)?;
-        // ВАЖНО: изменим блендинг для корректного наложения на 3D сцену
-        dev.SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE.0 as _)?; // Было D3DBLEND_ONE, оставляем
+        dev.SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE.0 as _)?;
         dev.SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA.0 as _)?;
         dev.SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, true as _)?;
         dev.SetRenderState(D3DRS_BLENDOPALPHA, D3DBLENDOP_ADD.0 as _)?;

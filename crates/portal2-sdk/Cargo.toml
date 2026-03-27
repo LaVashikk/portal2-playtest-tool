@@ -1,0 +1,31 @@
+[package]
+name = "portal2-sdk"
+version = "1.0.0"
+edition = "2024"
+authors = ["LaVashikk <contact@lavashik.dev>"]
+description = "A Rust SDK for Portal 2 modding and plugin development"
+license = "MIT"
+repository = "https://github.com/LaVashikk/portal2-rust-overlay/tree/main/crates/portal2-sdk"
+readme = "README.md"
+keywords = ["portal2", "source-engine", "sdk", "gamedev"]
+categories = ["api-bindings", "game-development"]
+
+[dependencies]
+log = "0.4"
+bitflags = "2.5.0"
+
+[dependencies.windows]
+version = "=0.59"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D9",
+    "Win32_System_LibraryLoader",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Memory",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_HiDpi",
+    "Win32_System_ProcessStatus",
+]

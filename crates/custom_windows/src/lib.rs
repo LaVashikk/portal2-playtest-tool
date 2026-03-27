@@ -3,7 +3,10 @@
 //! This crate is responsible for defining the UI of the overlay. It contains the `Window` trait,
 //! which every window must implement, and the `regist_windows` function, which assembles and
 //! returns a collection of all active UI windows.
-use source_sdk::Engine;
+use portal2_sdk::Engine;
+
+/// Base font scale factor
+pub const BASE_TEXT_SCALE: f32 = 1.25;
 
 /// Shared state accessible to all windows.
 #[derive(Debug, Default, Clone)]
@@ -43,7 +46,9 @@ pub trait Window {
 ///
 /// This function is the designated discovery point for UI components. The core
 /// application calls it to populate the `UiManager`'s window list.
-pub fn regist_windows() -> Vec<Box<dyn Window + Send>> {
+pub fn regist_windows(engine: &Engine) -> Vec<Box<dyn Window + Send>> {
+    regist_events(engine);
+
     survey::init_survey();
     log::info!("UI components initialized.");
 
@@ -53,6 +58,16 @@ pub fn regist_windows() -> Vec<Box<dyn Window + Send>> {
         Box::new(survey::SurveyWin::new()),
         Box::new(survey::BugReportWin::new("survey/bug_report.json")),
     ]
+}
+
+fn regist_events(engine: &Engine) {
+    // https://developer.valvesoftware.com/wiki/Logic_eventlistener
+    engine.game_event_manager().listen("server_spawn", |event| {
+        log::warn!("started. Name: {}, os: {}, hostname: {}", event.get_string("mapname", ""), event.get_string("os", ""), event.get_string("hostname", ""));
+    });
+    engine.game_event_manager().listen("server_shutdown", |event| {
+        log::warn!("stopped: {}", event.get_string("reason", ""));
+    });
 }
 
 

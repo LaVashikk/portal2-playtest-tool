@@ -74,7 +74,7 @@ impl Window for ToastWindow {
     fn toggle(&mut self) {}
     fn is_open(&self) -> bool { true }
 
-    fn draw(&mut self, ctx: &egui::Context, _shared_state: &mut SharedState, _engine: &source_sdk::Engine) {
+    fn draw(&mut self, ctx: &egui::Context, _shared_state: &mut SharedState, _engine: &portal2_sdk::Engine) {
         self.check_for_new_logs();
         self.toasts.show(ctx);
     }
