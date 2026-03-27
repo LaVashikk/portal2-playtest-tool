@@ -1,0 +1,9 @@
+[package]
+name = "recorder"
+publish.workspace = true
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+thiserror = "1.0"
+log = "0.4"

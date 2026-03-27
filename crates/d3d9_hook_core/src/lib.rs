@@ -7,17 +7,21 @@
 //!   - install_on_d3d9(d3d9_ptr, callbacks) — proxy scenario (method 1).
 //!   - start_offsets_hook_thread(offsets, delay_ms, callbacks) — client-wrapper/server-plugin (methods 2/3).
 //! - Invoke callbacks for overlay lifecycle: on_device_created / on_present / on_pre_reset / on_post_reset.
+//! - Added automatic gameplay recording functionality.
 
+#![allow(unsafe_op_in_unsafe_fn)]
 #![cfg(all(target_os = "windows", target_pointer_width = "32"))]
 
 use std::ffi::c_void;
-use std::sync::{Mutex, OnceLock};
-use std::thread;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{LazyLock, Mutex};
 
-use windows::core::HRESULT;
+use recorder::{CAPTURE_SCALE, FRAME_SKIP, RECORDER, RecorderError};
+use windows::core::{HRESULT, PCSTR};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct3D9::{
-    D3DDEVICE_CREATION_PARAMETERS, D3DPRESENT_PARAMETERS, IDirect3D9, IDirect3DDevice9,
+    D3DBACKBUFFER_TYPE_MONO, D3DDEVICE_CREATION_PARAMETERS, D3DLOCKED_RECT, D3DPRESENT_PARAMETERS,
+    D3DSURFACE_DESC, IDirect3D9, IDirect3DDevice9, D3DPOOL_SYSTEMMEM, D3DTEXF_NONE,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 use windows::Win32::System::Memory::{VirtualProtect, PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS};
@@ -51,6 +55,13 @@ pub struct Callbacks {
     pub on_pre_reset: fn(),
     pub on_post_reset: fn(&IDirect3DDevice9),
     pub on_present: fn(&IDirect3DDevice9),
+
+
+    pub game_is_paused: fn() -> bool,
+    pub recording_is_running: fn() -> bool,
+    pub recording_stop: fn(),
+    pub recording_restart: fn(),
+    pub recording_send_frame: fn(Vec<u8>) -> Result<(), RecorderError>,
 }
 
 struct HookState {
@@ -73,30 +84,27 @@ struct HookState {
 unsafe impl Send for HookState {}
 unsafe impl Sync for HookState {}
 
-static STATE: OnceLock<Mutex<HookState>> = OnceLock::new();
-
-fn state() -> &'static Mutex<HookState> {
-    STATE.get_or_init(|| {
-        Mutex::new(HookState {
-            callbacks: None,
-            device: None,
-            hwnd: None,
-            o_create_device: None,
-            o_present: None,
-            o_reset: None,
-            present_installed: false,
-            reset_installed: false,
-            device_notified: false,
-        })
+static STATE: LazyLock<Mutex<HookState>> = LazyLock::new(|| {
+    Mutex::new(HookState {
+        callbacks: None,
+        device: None,
+        hwnd: None,
+        o_create_device: None,
+        o_present: None,
+        o_reset: None,
+        present_installed: false,
+        reset_installed: false,
+        device_notified: false,
     })
-}
+});
+
 
 /// Install CreateDevice hook on an IDirect3D9 instance (method 1 / d3d9 proxy).
 ///
 /// Safety: Caller must ensure `d3d9` is a valid IDirect3D9 object pointer from Direct3DCreate9.
-pub unsafe fn install_on_d3d9(d3d9: *mut IDirect3D9, cb: &'static Callbacks) -> anyhow::Result<()> { unsafe {
+pub unsafe fn install_on_d3d9(d3d9: *mut IDirect3D9, cb: &'static Callbacks) -> anyhow::Result<()> {
     {
-        let mut st = state().lock().unwrap();
+        let mut st = STATE.lock().unwrap();
         st.callbacks = Some(cb);
     }
 
@@ -105,7 +113,7 @@ pub unsafe fn install_on_d3d9(d3d9: *mut IDirect3D9, cb: &'static Callbacks) -> 
     let create_device_fn_ptr_location = vtable_ptr.add(16);
 
     {
-        let mut st = state().lock().unwrap();
+        let mut st = STATE.lock().unwrap();
         if st.o_create_device.is_none() {
             st.o_create_device = Some(std::mem::transmute(create_device_fn_ptr_location.read()));
         }
@@ -134,7 +142,7 @@ pub unsafe fn install_on_d3d9(d3d9: *mut IDirect3D9, cb: &'static Callbacks) -> 
     .expect("VirtualProtect restore failed for CreateDevice entry");
 
     Ok(())
-}}
+}
 
 /// Start a thread that tries to find the device via offsets (methods 2/3).
 pub fn start_offsets_hook_thread(
@@ -143,11 +151,11 @@ pub fn start_offsets_hook_thread(
     cb: &'static Callbacks,
 ) {
     {
-        let mut st = state().lock().unwrap();
+        let mut st = STATE.lock().unwrap();
         st.callbacks = Some(cb);
     }
 
-    thread::spawn(move || {
+    std::thread::spawn(move || {
         if delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(delay_ms));
         }
@@ -160,7 +168,7 @@ pub fn start_offsets_hook_thread(
                 let mut params = D3DDEVICE_CREATION_PARAMETERS::default();
                 if device.GetCreationParameters(&mut params).is_ok() {
                     let hwnd = params.hFocusWindow;
-                    let mut st = state().lock().unwrap();
+                    let mut st = STATE.lock().unwrap();
                     st.device = Some(device.clone());
                     st.hwnd = Some(hwnd);
 
@@ -193,10 +201,18 @@ unsafe extern "system" fn hooked_create_device(
     behaviorflags: u32,
     ppresentationparameters: *mut D3DPRESENT_PARAMETERS,
     ppreturneddeviceinterface: *mut Option<IDirect3DDevice9>,
-) -> HRESULT { unsafe {
+) -> HRESULT {
+    // Stop any previous recording session, just in case.
+    {
+        let st = STATE.lock().unwrap();
+        if let Some(cb) = st.callbacks {
+            (cb.recording_restart)();
+        }
+    }
+
     // Call original CreateDevice first.
     let hr = {
-        let st = state().lock().unwrap();
+        let st = STATE.lock().unwrap();
         (st.o_create_device.unwrap())(
             this,
             adapter,
@@ -212,7 +228,7 @@ unsafe extern "system" fn hooked_create_device(
         if let Some(Some(device)) = ppreturneddeviceinterface.as_mut() {
             // Notify overlay first.
             {
-                let mut st = state().lock().unwrap();
+                let mut st = STATE.lock().unwrap();
                 st.device = Some(device.clone());
                 st.hwnd = Some(hfocuswindow);
 
@@ -230,30 +246,38 @@ unsafe extern "system" fn hooked_create_device(
     }
 
     hr
-}}
+}
 
 unsafe extern "system" fn hooked_reset(
     this: IDirect3DDevice9,
     params: *mut D3DPRESENT_PARAMETERS,
-) -> HRESULT { unsafe {
+) -> HRESULT {
     // Pre-reset callback
     {
-        let st = state().lock().unwrap();
+        let st = STATE.lock().unwrap();
         if let Some(cb) = st.callbacks {
             (cb.on_pre_reset)();
         }
     }
 
+    // Stop recorder before reset. It will be restarted on the next Present call.
+    {
+        let st = STATE.lock().unwrap();
+        if let Some(cb) = st.callbacks {
+            (cb.recording_restart)();
+        }
+    }
+
     // Call original Reset
     let hr = {
-        let st = state().lock().unwrap();
+        let st = STATE.lock().unwrap();
         (st.o_reset.unwrap())(this.clone(), params)
     };
 
     if hr.is_ok() {
         // Post-reset callback
         {
-            let st = state().lock().unwrap();
+            let st = STATE.lock().unwrap();
             if let Some(cb) = st.callbacks {
                 (cb.on_post_reset)(&this);
             }
@@ -261,7 +285,7 @@ unsafe extern "system" fn hooked_reset(
     }
 
     hr
-}}
+}
 
 unsafe extern "system" fn hooked_present(
     this: IDirect3DDevice9,
@@ -269,10 +293,25 @@ unsafe extern "system" fn hooked_present(
     dst: *const RECT,
     hwnd: HWND,
     dirty: *const c_void,
-) -> HRESULT { unsafe {
+) -> HRESULT {
+    // Handle recording
+    {
+        static FRAME_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+        let st = STATE.lock().unwrap();
+        if let Some(cb) = st.callbacks {
+            if !(cb.game_is_paused)() && (cb.recording_is_running)() { // TODO: мне все равно надо из custom_win/runtime крейта вызывать STOP_RECORDER. Мб тогда флаги ввести: PAUSE / STOPPED, без этих лишних хуков калбеков?
+                let frame_num = FRAME_COUNTER.fetch_add(1, Ordering::Relaxed);
+                if frame_num % FRAME_SKIP == 0 {
+                    capture_and_send_frame(&this, cb);
+                }
+            }
+        }
+    }
+
     // Lazy on_device_created if we didn't notify yet (covers offsets path).
     {
-        let mut st = state().lock().unwrap();
+        let mut st = STATE.lock().unwrap();
         if !st.device_notified {
             // Try resolve HWND from device if not present
             let hwnd_to_use = if let Some(h) = st.hwnd {
@@ -297,7 +336,7 @@ unsafe extern "system" fn hooked_present(
 
     // Per-frame callback
     {
-        let st = state().lock().unwrap();
+        let st = STATE.lock().unwrap();
         if let Some(cb) = st.callbacks {
             (cb.on_present)(&this);
         }
@@ -305,19 +344,131 @@ unsafe extern "system" fn hooked_present(
 
     // Call original Present
     let hr = {
-        let st = state().lock().unwrap();
+        let st = STATE.lock().unwrap();
         (st.o_present.unwrap())(this, src, dst, hwnd, dirty)
     };
 
     hr
-}}
+}
+
+unsafe fn capture_and_send_frame(device: &IDirect3DDevice9, cb: &'static Callbacks) {
+    // 1. Get back buffer
+    let back_buffer = match device.GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO) {
+        Ok(bb) => bb,
+        Err(e) => {
+            log::warn!("GetBackBuffer failed: {}", e);
+            return;
+        }
+    };
+
+    let mut desc = D3DSURFACE_DESC::default();
+    if back_buffer.GetDesc(&mut desc).is_err() {
+        return;
+    }
+
+    let (capture_width, capture_height) = (desc.Width / CAPTURE_SCALE, desc.Height / CAPTURE_SCALE);
+
+    // 2. Create intermediate render target for downscaling
+    let mut intermediate_surface = None;
+    if device
+        .CreateRenderTarget(
+            capture_width,
+            capture_height,
+            desc.Format,
+            desc.MultiSampleType,
+            desc.MultiSampleQuality,
+            false, // Not lockable
+            &mut intermediate_surface,
+            std::ptr::null_mut(),
+        )
+        .is_err()
+    {
+        return;
+    }
+    let intermediate_surface = match intermediate_surface {
+        Some(s) => s,
+        None => return,
+    };
+
+    // 3. Use GPU to scale from back buffer to our smaller intermediate surface
+    if device
+        .StretchRect(
+            &back_buffer,
+            std::ptr::null(),
+            &intermediate_surface,
+            std::ptr::null(),
+            D3DTEXF_NONE,
+        )
+        .is_err()
+    {
+        return;
+    }
+
+    // 4. Create final system memory surface to copy to
+    let mut final_surface = None;
+    if device
+        .CreateOffscreenPlainSurface(
+            capture_width,
+            capture_height,
+            desc.Format,
+            D3DPOOL_SYSTEMMEM,
+            &mut final_surface,
+            std::ptr::null_mut(),
+        )
+        .is_err()
+    {
+        return;
+    }
+    let final_surface = match final_surface {
+        Some(s) => s,
+        None => return,
+    };
+
+    // 5. Copy the now-small texture from GPU to CPU
+    if device
+        .GetRenderTargetData(&intermediate_surface, &final_surface)
+        .is_ok()
+    {
+        let mut locked_rect = D3DLOCKED_RECT::default();
+        if final_surface
+            .LockRect(&mut locked_rect, std::ptr::null(), 1)
+            .is_ok()
+        {
+            let bytes_per_pixel = 4;
+            let target_stride = capture_width * bytes_per_pixel;
+            let mut frame_data =
+                Vec::with_capacity((capture_width * capture_height * bytes_per_pixel) as usize);
+
+            let src_slice = std::slice::from_raw_parts(
+                locked_rect.pBits as *const u8,
+                (capture_height * locked_rect.Pitch as u32) as usize,
+            );
+
+            if locked_rect.Pitch as u32 == target_stride {
+                frame_data.extend_from_slice(src_slice);
+            } else {
+                for y in 0..capture_height {
+                    let row_start = (y * locked_rect.Pitch as u32) as usize;
+                    let row_end = row_start + target_stride as usize;
+                    frame_data.extend_from_slice(&src_slice[row_start..row_end]);
+                }
+            }
+
+            if let Err(e) = (cb.recording_send_frame)(frame_data) {
+                log::warn!("Failed to send frame to recorder: {:?}", e);
+            }
+
+            let _ = final_surface.UnlockRect();
+        }
+    }
+}
 
 // ============================================================
 // Device hooks installation
 // ============================================================
 
-unsafe fn install_device_hooks(device: &IDirect3DDevice9) { unsafe {
-    let mut st = state().lock().unwrap();
+unsafe fn install_device_hooks(device: &IDirect3DDevice9) {
+    let mut st = STATE.lock().unwrap();
     if st.present_installed && st.reset_installed {
         return;
     }
@@ -341,9 +492,9 @@ unsafe fn install_device_hooks(device: &IDirect3DDevice9) { unsafe {
         patch_vtable_entry(present_entry, hooked_present as usize);
         st.present_installed = true;
     }
-}}
+}
 
-unsafe fn patch_vtable_entry(entry: *mut usize, new_fn: usize) { unsafe {
+unsafe fn patch_vtable_entry(entry: *mut usize, new_fn: usize) {
     let mut old_protect = PAGE_PROTECTION_FLAGS(0);
     VirtualProtect(
         entry as _,
@@ -364,13 +515,21 @@ unsafe fn patch_vtable_entry(entry: *mut usize, new_fn: usize) { unsafe {
     )
     .ok()
     .expect("VirtualProtect restore failed for vtable entry");
-}}
+}
 
 /// Uninstalls device hooks (Present/Reset) by restoring original vtable entries.
 /// Safe to call multiple times. Returns true if anything was restored.
 pub fn uninstall() -> bool {
+    // Stop recorder first
+    {
+        let st = STATE.lock().unwrap();
+        if let Some(cb) = st.callbacks {
+            (cb.recording_stop)();
+        }
+    }
+
     unsafe {
-        let mut st = state().lock().unwrap();
+        let mut st = STATE.lock().unwrap();
 
         // If we have no device, we can't restore vtable entries safely.
         let Some(device) = st.device.clone() else {
@@ -423,7 +582,7 @@ pub fn uninstall() -> bool {
 const SHADER_API_MODULES: &[&str] = &["shaderapidx9.dll", "shaderapivk.dll"];
 
 // Offsets-based device acquisition
-unsafe fn get_d3d_device_by_offsets(offsets: &[usize]) -> Option<IDirect3DDevice9> { unsafe {
+unsafe fn get_d3d_device_by_offsets(offsets: &[usize]) -> Option<IDirect3DDevice9> {
     for &module in SHADER_API_MODULES {
         log::debug!("Attempting to get module handle for {}...", module);
         let mut module_cstr = Vec::with_capacity(module.len() + 1);
@@ -483,4 +642,4 @@ unsafe fn get_d3d_device_by_offsets(offsets: &[usize]) -> Option<IDirect3DDevice
 
     log::error!("Failed to initialize graphics hook. The overlay will not work.");
     None
-}}
+}

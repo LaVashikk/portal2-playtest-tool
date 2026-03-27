@@ -13,13 +13,13 @@ members = [
     # Overlay system
     "crates/overlay_runtime",
     "crates/custom_windows",
+    "crates/recorder",
 
     # Source Engine FFI bindings
     "crates/portal2-sdk",
 
     # Server backend
-    "crates/feedback-server"
-]
+    "crates/feedback-server"]
 default-members = ["crates/injector_d3d9_proxy"]
 
 [workspace.package]
@@ -40,6 +40,7 @@ portal2-sdk = { path = "crates/portal2-sdk" }
 custom_windows = { path = "crates/custom_windows" }
 d3d9_hook_core = { path = "crates/d3d9_hook_core" }
 overlay_runtime = { path = "crates/overlay_runtime" }
+recorder = { path = "crates/recorder" }
 
 [workspace.dependencies.windows]
 version = "=0.59"

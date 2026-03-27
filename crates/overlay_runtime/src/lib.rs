@@ -7,7 +7,10 @@
 
 #![cfg(all(target_os = "windows", target_pointer_width = "32"))]
 
+use std::path::PathBuf;
 use std::sync::{Mutex, Once, OnceLock};
+use recorder::Recorder;
+use portal2_sdk::utils::get_dll_directory;
 use windows::core::PCSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -148,26 +151,6 @@ impl UiManager {
     }
 }
 
-fn initialize_engine_and_app() {
-    match portal2_sdk::Engine::initialize() {
-        Ok(instance) => {
-            if OVERLAY_RUNTIME.set(Mutex::new(UiManager::new(instance))).is_err() {
-                log::error!("UiManager was already initialized! This is a bug.");
-            }
-        }
-        Err(err) => {
-            log::error!("Failed to initialize engine interfaces: {}", err);
-            unsafe {
-                MessageBoxA(
-                    None,
-                    PCSTR(b"Failed to initialize engine interfaces! The overlay will not work.\0".as_ptr()),
-                    PCSTR(b"Initialization Error\0".as_ptr()),
-                    MB_ICONERROR,
-                );
-            }
-        }
-    }
-}
 
 /// Called by d3d9_hook_core on first valid device.
 pub fn on_device_created(hwnd: HWND, device: &IDirect3DDevice9) {
@@ -175,11 +158,40 @@ pub fn on_device_created(hwnd: HWND, device: &IDirect3DDevice9) {
     INIT.call_once(|| {
         let _ = FOCUS_HWND.set(SyncHWND(hwnd));
 
-        initialize_engine_and_app();
-
         let renderer = egui_backend::EguiDx9Lite::init(device, hwnd, false);
         if EGUI_RENDERER.set(Mutex::new(renderer)).is_err() {
             log::warn!("Egui renderer already initialized!");
+        }
+
+        let engine_instance = match portal2_sdk::Engine::initialize() {
+            Ok(instance) => instance,
+            Err(err) => {
+                log::error!("Failed to initialize engine interfaces: {}", err);
+                unsafe {
+                    MessageBoxA(
+                        None,
+                        PCSTR(b"Failed to initialize engine interfaces! The overlay will not work.\0".as_ptr()),
+                        PCSTR(b"Initialization Error\0".as_ptr()),
+                        MB_ICONERROR,
+                    );
+                }
+                return;
+            }
+        };
+
+        // TODO: or engine screen size, or renderer.get_screen_size
+        let resolution = engine_instance.client().get_screen_size();
+        let ffmpeg_path = get_dll_directory().unwrap_or_default().join("ffmpeg.exe");
+        let _ = recorder::RECORDER.set(Mutex::new(
+            Recorder::new(
+                resolution.0 as u32 / recorder::CAPTURE_SCALE,
+                resolution.1 as u32 / recorder::CAPTURE_SCALE,
+                ffmpeg_path,
+            ),
+        ));
+
+        if OVERLAY_RUNTIME.set(Mutex::new(UiManager::new(engine_instance))).is_err() {
+            unreachable!()
         }
 
         unsafe {
@@ -259,11 +271,69 @@ pub unsafe extern "stdcall" fn hooked_wndproc(
     }
 }}
 
+pub fn is_paused_callback() -> bool {
+    if let Some(app_mutex) = OVERLAY_RUNTIME.get() {
+        if let Ok(app) = app_mutex.try_lock() {
+            let client = app.engine_instance.client();
+            return client.is_paused() || !client.is_in_game();
+        }
+    }
+    // If we can't get the lock, assume it's not paused to be safe.
+    false
+}
+
+pub fn recording_is_running() -> bool {
+    if let Some(recorder_mutex) = recorder::RECORDER.get() {
+        if let Ok(recorder) = recorder_mutex.lock() {
+            return recorder.is_running();
+        }
+    }
+    false
+}
+
+pub fn recording_restart() {
+    if let Some(recorder_mutex) = recorder::RECORDER.get() {
+        if let Ok(mut recorder) = recorder_mutex.lock() {
+            if let Err(err) = recorder.stop_recording() {
+                log::error!("Failed to stop recording: {}", err);
+            }
+
+        }
+    }
+}
+
+pub fn recording_stop() {
+    if let Some(recorder_mutex) = recorder::RECORDER.get() {
+        if let Ok(mut recorder) = recorder_mutex.lock() {
+            if let Err(err) = recorder.stop_recording() {
+                log::error!("Failed to stop recording: {}", err);
+            }
+        }
+    }
+}
+
+pub fn recording_send_frame(frame: Vec<u8>) -> Result<(), recorder::RecorderError> {
+    log::debug!("Got frames: {}", frame.len());
+    if let Some(recorder_mutex) = recorder::RECORDER.get() {
+        if let Ok(recorder) = recorder_mutex.lock() {
+            recorder.send_frame(frame)?;
+        }
+    }
+
+    Ok(())
+}
+
 pub static CALLBACKS: Callbacks = Callbacks {
     on_device_created,
     on_pre_reset,
     on_post_reset,
     on_present,
+
+    game_is_paused: is_paused_callback,
+    recording_is_running,
+    recording_stop,
+    recording_restart,
+    recording_send_frame,
 };
 
 /// Restores original WndProc and clears overlay state.

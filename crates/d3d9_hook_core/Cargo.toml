@@ -8,3 +8,4 @@ version.workspace = true
 log.workspace = true
 anyhow.workspace = true
 windows.workspace = true
+recorder.workspace = true
