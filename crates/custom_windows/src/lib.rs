@@ -6,6 +6,9 @@
 use egui::Context;
 use source_sdk::{Engine, game_events::{GameEvent, EventCallback}};
 
+/// Base font scale factor
+pub const BASE_TEXT_SCALE: f32 = 1.25;
+
 /// Shared state accessible to all windows.
 #[derive(Debug, Default, Clone)]
 pub struct SharedState {

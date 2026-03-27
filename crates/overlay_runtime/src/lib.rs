@@ -21,8 +21,6 @@ use windows::Win32::Graphics::Direct3D9::IDirect3DDevice9;
 pub use d3d9_hook_core::Callbacks;
 pub mod logger;
 
-const TEXT_SCALE: f32 = 1.25;
-
 pub static OVERLAY_RUNTIME: OnceLock<Mutex<UiManager>> = OnceLock::new();
 static EGUI_RENDERER: OnceLock<Mutex<egui_backend::EguiDx9Lite>> = OnceLock::new();
 static mut O_WNDPROC: Option<WNDPROC> = None;
@@ -64,13 +62,17 @@ impl UiManager {
     }
 
     pub(crate) fn draw_ui(&mut self, ctx: &egui::Context) {
+        use custom_windows::BASE_TEXT_SCALE;
+
+        // Apply zoom factor to text styles
+        let zoom = ctx.zoom_factor();
         let mut style = (*ctx.style()).clone();
         style.text_styles = [
-            (egui::TextStyle::Heading, egui::FontId::new(18.0*TEXT_SCALE, egui::FontFamily::Proportional)),
-            (egui::TextStyle::Body, egui::FontId::new(12.5*TEXT_SCALE, egui::FontFamily::Proportional)),
-            (egui::TextStyle::Monospace, egui::FontId::new(12.0*TEXT_SCALE, egui::FontFamily::Proportional)),
-            (egui::TextStyle::Button, egui::FontId::new(12.5*TEXT_SCALE, egui::FontFamily::Proportional)),
-            (egui::TextStyle::Small, egui::FontId::new(9.0*TEXT_SCALE, egui::FontFamily::Proportional)),
+            (egui::TextStyle::Heading, egui::FontId::new(18.0 * BASE_TEXT_SCALE * zoom, egui::FontFamily::Proportional)),
+            (egui::TextStyle::Body, egui::FontId::new(12.5 * BASE_TEXT_SCALE * zoom, egui::FontFamily::Proportional)),
+            (egui::TextStyle::Monospace, egui::FontId::new(12.0 * BASE_TEXT_SCALE * zoom, egui::FontFamily::Proportional)),
+            (egui::TextStyle::Button, egui::FontId::new(12.5 * BASE_TEXT_SCALE * zoom, egui::FontFamily::Proportional)),
+            (egui::TextStyle::Small, egui::FontId::new(9.0 * BASE_TEXT_SCALE * zoom, egui::FontFamily::Proportional)),
         ].into();
         ctx.set_style(style);
 
@@ -184,7 +186,7 @@ pub fn on_device_created(hwnd: HWND, device: &IDirect3DDevice9) {
             O_WNDPROC = Some(std::mem::transmute(SetWindowLongPtrW(
                 hwnd,
                 GWLP_WNDPROC,
-                hooked_wndproc as usize as i32,
+                hooked_wndproc as *const () as usize as i32,
             )));
         }
     });

@@ -83,7 +83,18 @@ impl<T: Send> EguiDx9<T> {
             return;
         }
 
-        let output = self.ctx.run(self.input_man.collect_input(), |ctx| {
+        let input = self.input_man.collect_input();
+        
+        // Handle zoom events from Ctrl+MouseWheel
+        for event in &input.events {
+            if let egui::Event::Zoom(factor) = event {
+                let current_zoom = self.ctx.zoom_factor();
+                let new_zoom = (current_zoom * factor).clamp(0.5, 3.0);
+                self.ctx.set_zoom_factor(new_zoom);
+            }
+        }
+
+        let output = self.ctx.run(input, |ctx| {
             // safe. present will never run in parallel.
             (self.ui_fn)(ctx, &mut self.ui_state)
         });
