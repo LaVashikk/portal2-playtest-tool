@@ -10,12 +10,14 @@ pub mod types;
 mod interfaces;
 mod memory;
 
+mod server;
 mod client;
 mod cvar;
 pub mod input_system;
 pub mod game_events;
 
 use crate::input_system::IInputStackSystem;
+use crate::server::IVEngineServer;
 pub use client::IVEngineClient;
 pub use cvar::{ICvar, CvarFlags, ConVar, ConCommandBase};
 pub use game_events::IGameEventManager2;
@@ -26,6 +28,7 @@ pub struct Engine {
     input_stack_system: IInputStackSystem,
     icvar: ICvar,
     game_event_manager: IGameEventManager2,
+    engine_server: IVEngineServer,
 }
 
 /// # Safety
@@ -53,6 +56,12 @@ impl Engine {
     pub fn game_event_manager(&self) -> &IGameEventManager2 {
         &self.game_event_manager
     }
+
+    pub fn engine_server(&self) -> &IVEngineServer {
+        &self.engine_server
+    }
+
+   
 }
 
 
@@ -94,6 +103,14 @@ impl Engine {
         if game_event_manager_this.is_null() {
             return Err("Failed to find IGameEventManager2 interface pointer".to_string());
         }
+
+        let engine_server_this = unsafe {
+            interfaces::find_interface::<c_void>(b"engine.dll\0", b"VEngineServer022\0")
+        };
+        if engine_server_this.is_null() {
+            return Err("Failed to find IVEngineServer interface pointer.".to_string());
+        }
+
 
         // --- Get the memory ranges of the modules to scan. ---
         let engine_dll = unsafe { memory::get_module_memory_range(b"engine.dll\0") };
@@ -188,11 +205,160 @@ impl Engine {
             listener: game_events::create_master_listener(),
         };
 
+        let engine_server = IVEngineServer {
+            this: engine_server_this as *mut _,
+            change_level: get_vfunc!(engine_server_this, 0),
+            is_map_valid: get_vfunc!(engine_server_this, 1),
+            is_dedicated_server: get_vfunc!(engine_server_this, 2),
+            is_in_edit_mode: get_vfunc!(engine_server_this, 3),
+            get_launch_options: get_vfunc!(engine_server_this, 4),
+            precache_model: get_vfunc!(engine_server_this, 5),
+            precache_sentence_file: get_vfunc!(engine_server_this, 6),
+            precache_decal: get_vfunc!(engine_server_this, 7),
+            precache_generic: get_vfunc!(engine_server_this, 8),
+            is_model_precached: get_vfunc!(engine_server_this, 9),
+            is_decal_precached: get_vfunc!(engine_server_this, 10),
+            is_generic_precached: get_vfunc!(engine_server_this, 11),
+            get_cluster_for_origin: get_vfunc!(engine_server_this, 12),
+            get_pvs_for_cluster: get_vfunc!(engine_server_this, 13),
+            check_origin_in_pvs: get_vfunc!(engine_server_this, 14),
+            check_box_in_pvs: get_vfunc!(engine_server_this, 15),
+            get_player_user_id: get_vfunc!(engine_server_this, 16),
+            get_player_network_id_string: get_vfunc!(engine_server_this, 17),
+            is_user_id_in_use: get_vfunc!(engine_server_this, 18),
+            get_loading_progress_for_user_id: get_vfunc!(engine_server_this, 19),
+            get_entity_count: get_vfunc!(engine_server_this, 20),
+            get_player_net_info: get_vfunc!(engine_server_this, 21),
+            create_edict: get_vfunc!(engine_server_this, 22),
+            remove_edict: get_vfunc!(engine_server_this, 23),
+            pv_alloc_ent_private_data: get_vfunc!(engine_server_this, 24),
+            free_ent_private_data: get_vfunc!(engine_server_this, 25),
+            save_alloc_memory: get_vfunc!(engine_server_this, 26),
+            save_free_memory: get_vfunc!(engine_server_this, 27),
+            emit_ambient_sound: get_vfunc!(engine_server_this, 28),
+            fade_client_volume: get_vfunc!(engine_server_this, 29),
+            sentence_group_pick: get_vfunc!(engine_server_this, 30),
+            sentence_group_pick_sequential: get_vfunc!(engine_server_this, 31),
+            sentence_index_from_name: get_vfunc!(engine_server_this, 32),
+            sentence_name_from_index: get_vfunc!(engine_server_this, 33),
+            sentence_group_index_from_name: get_vfunc!(engine_server_this, 34),
+            sentence_group_name_from_index: get_vfunc!(engine_server_this, 35),
+            sentence_length: get_vfunc!(engine_server_this, 36),
+            server_command: get_vfunc!(engine_server_this, 37),
+            server_execute: get_vfunc!(engine_server_this, 38),
+            client_command: get_vfunc!(engine_server_this, 39),
+            light_style: get_vfunc!(engine_server_this, 40),
+            static_decal: get_vfunc!(engine_server_this, 41),
+            message_determine_multicast_recipients: get_vfunc!(engine_server_this, 42),
+            entity_message_begin: get_vfunc!(engine_server_this, 43),
+            user_message_begin: get_vfunc!(engine_server_this, 44),
+            message_end: get_vfunc!(engine_server_this, 45),
+            client_printf: get_vfunc!(engine_server_this, 46),
+            con_nprintf: get_vfunc!(engine_server_this, 47),
+            // con_nxprintf: get_vfunc!(engine_server_this, 48),
+            set_view: get_vfunc!(engine_server_this, 49),
+            crosshair_angle: get_vfunc!(engine_server_this, 50),
+            get_game_dir: get_vfunc!(engine_server_this, 51),
+            compare_file_time: get_vfunc!(engine_server_this, 52),
+            lock_network_string_tables: get_vfunc!(engine_server_this, 53),
+            create_fake_client: get_vfunc!(engine_server_this, 54),
+            get_client_con_var_value: get_vfunc!(engine_server_this, 55),
+            parse_file: get_vfunc!(engine_server_this, 56),
+            copy_file: get_vfunc!(engine_server_this, 57),
+            reset_pvs: get_vfunc!(engine_server_this, 58),
+            add_origin_to_pvs: get_vfunc!(engine_server_this, 59),
+            set_area_portal_state: get_vfunc!(engine_server_this, 60),
+            playback_temp_entity: get_vfunc!(engine_server_this, 61),
+            check_headnode_visible: get_vfunc!(engine_server_this, 62),
+            check_areas_connected: get_vfunc!(engine_server_this, 63),
+            get_area: get_vfunc!(engine_server_this, 64),
+            get_area_bits: get_vfunc!(engine_server_this, 65),
+            get_area_portal_plane: get_vfunc!(engine_server_this, 66),
+            load_game_state: get_vfunc!(engine_server_this, 67),
+            load_adjacent_ents: get_vfunc!(engine_server_this, 68),
+            clear_save_dir: get_vfunc!(engine_server_this, 69),
+            get_map_entities_string: get_vfunc!(engine_server_this, 70),
+            text_message_get: get_vfunc!(engine_server_this, 71),
+            log_print: get_vfunc!(engine_server_this, 72),
+            is_log_enabled: get_vfunc!(engine_server_this, 73),
+            build_entity_cluster_list: get_vfunc!(engine_server_this, 74),
+            solid_moved: get_vfunc!(engine_server_this, 75),
+            trigger_moved: get_vfunc!(engine_server_this, 76),
+            create_spatial_partition: get_vfunc!(engine_server_this, 77),
+            destroy_spatial_partition: get_vfunc!(engine_server_this, 78),
+            draw_map_to_scratch_pad: get_vfunc!(engine_server_this, 79),
+            get_entity_transmit_bits_for_client: get_vfunc!(engine_server_this, 80),
+            is_paused: get_vfunc!(engine_server_this, 81),
+            get_timescale: get_vfunc!(engine_server_this, 82),
+            force_exact_file: get_vfunc!(engine_server_this, 83),
+            force_model_bounds: get_vfunc!(engine_server_this, 84),
+            clear_save_dir_after_client_load: get_vfunc!(engine_server_this, 85),
+            set_fake_client_con_var_value: get_vfunc!(engine_server_this, 86),
+            force_simple_material: get_vfunc!(engine_server_this, 87),
+            is_in_commentary_mode: get_vfunc!(engine_server_this, 88),
+            is_level_main_menu_background: get_vfunc!(engine_server_this, 89),
+            set_area_portal_states: get_vfunc!(engine_server_this, 90),
+            notify_edict_flags_change: get_vfunc!(engine_server_this, 91),
+            get_prev_check_transmit_info: get_vfunc!(engine_server_this, 92),
+            get_shared_edict_change_info: get_vfunc!(engine_server_this, 93),
+            allow_immediate_edict_reuse: get_vfunc!(engine_server_this, 94),
+            is_internal_build: get_vfunc!(engine_server_this, 95),
+            get_change_accessor: get_vfunc!(engine_server_this, 96),
+            get_most_recently_loaded_file_name: get_vfunc!(engine_server_this, 97),
+            get_save_file_name: get_vfunc!(engine_server_this, 98),
+            clean_up_entity_cluster_list: get_vfunc!(engine_server_this, 99),
+            get_app_id: get_vfunc!(engine_server_this, 100),
+            is_low_violence: get_vfunc!(engine_server_this, 101),
+            is_any_client_low_violence: get_vfunc!(engine_server_this, 102),
+            start_query_cvar_value: get_vfunc!(engine_server_this, 103),
+            insert_server_command: get_vfunc!(engine_server_this, 104),
+            get_player_info: get_vfunc!(engine_server_this, 105),
+            is_client_fully_authenticated: get_vfunc!(engine_server_this, 106),
+            set_dedicated_server_benchmark_mode: get_vfunc!(engine_server_this, 107),
+            is_split_screen_player: get_vfunc!(engine_server_this, 108),
+            get_split_screen_player_attach_to_edict: get_vfunc!(engine_server_this, 109),
+            get_num_split_screen_users_attached_to_edict: get_vfunc!(engine_server_this, 110),
+            get_split_screen_player_for_edict: get_vfunc!(engine_server_this, 111),
+            is_override_load_game_ents_on: get_vfunc!(engine_server_this, 112),
+            force_flush_entity: get_vfunc!(engine_server_this, 113),
+            get_single_player_shared_memory_space: get_vfunc!(engine_server_this, 114),
+            alloc_level_static_data: get_vfunc!(engine_server_this, 115),
+            get_cluster_count: get_vfunc!(engine_server_this, 116),
+            get_all_cluster_bounds: get_vfunc!(engine_server_this, 117),
+            is_creating_reslist: get_vfunc!(engine_server_this, 118),
+            is_creating_xbox_reslist: get_vfunc!(engine_server_this, 119),
+            is_dedicated_server_for_xbox: get_vfunc!(engine_server_this, 120),
+            pause: get_vfunc!(engine_server_this, 121),
+            set_timescale: get_vfunc!(engine_server_this, 122),
+            set_gamestats_data: get_vfunc!(engine_server_this, 123),
+            get_gamestats_data: get_vfunc!(engine_server_this, 124),
+            get_client_steam_id: get_vfunc!(engine_server_this, 125),
+            get_game_server_steam_id: get_vfunc!(engine_server_this, 126),
+            host_validate_session: get_vfunc!(engine_server_this, 127),
+            refresh_screen_if_necessary: get_vfunc!(engine_server_this, 128),
+            has_paintmap: get_vfunc!(engine_server_this, 129),
+            sphere_paint_surface: get_vfunc!(engine_server_this, 130),
+            sphere_trace_paint_surface: get_vfunc!(engine_server_this, 131),
+            remove_all_paint: get_vfunc!(engine_server_this, 132),
+            paint_all_surfaces: get_vfunc!(engine_server_this, 133),
+            remove_paint: get_vfunc!(engine_server_this, 134),
+            client_command_key_values: get_vfunc!(engine_server_this, 135),
+            get_client_xuid: get_vfunc!(engine_server_this, 136),
+            is_active_app: get_vfunc!(engine_server_this, 137),
+            set_no_clip_enabled: get_vfunc!(engine_server_this, 138),
+            get_paintmap_data_rle: get_vfunc!(engine_server_this, 139),
+            load_paintmap_data_rle: get_vfunc!(engine_server_this, 140),
+            send_paintmap_data_to_client: get_vfunc!(engine_server_this, 141),
+            get_latency_for_choreo_sounds: get_vfunc!(engine_server_this, 142),
+            get_client_cross_play_platform: get_vfunc!(engine_server_this, 143),
+        };
+
         Ok(Engine {
             client,
             input_stack_system,
             icvar,
             game_event_manager,
+            engine_server,
         })
     }
 }
