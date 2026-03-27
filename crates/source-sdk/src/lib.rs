@@ -9,6 +9,7 @@ mod signatures;
 pub mod types;
 mod interfaces;
 mod memory;
+mod entities;
 
 mod server;
 mod server_tools;
@@ -17,6 +18,7 @@ mod cvar;
 pub mod input_system;
 pub mod game_events;
 
+pub use crate::entities::Entities;
 use crate::input_system::IInputStackSystem;
 use crate::server::IVEngineServer;
 use crate::server_tools::IServerTools;
@@ -68,6 +70,9 @@ impl Engine {
         &self.server_tools
     }
 
+    pub fn entities(&self) -> Entities {
+        Entities::new(self.server_tools())
+    }
 }
 
 
