@@ -5,5 +5,6 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
+windows.workspace = true
 thiserror = "1.0"
 log = "0.4"

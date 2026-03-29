@@ -11,7 +11,7 @@ pub const FFMPEG_PATH: &str = "ffmpeg.exe";
 pub static RECORDER: OnceLock<Mutex<Recorder>> = OnceLock::new();
 pub const FRAME_SKIP: usize = 10;
 pub const RECORDING_FPS: i32 = 20; // todo: place it in config file, not hard-coded
-pub const CAPTURE_SCALE: u32 = 4; // Capture at 1/2 resolution (e.g., 1920x1080 -> 960x540)
+pub const CAPTURE_SCALE: u32 = 2; // Capture at 1/2 resolution (e.g., 1920x1080 -> 960x540)
 
 
 #[derive(Error, Debug)]
@@ -114,6 +114,68 @@ impl Recorder {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HwEncoder {
+    NvidiaNvenc,
+    AmdAmf,
+    IntelQsv,
+    Software, // Fallback (libx264)
+}
+
+pub fn detect_best_hw_encoder() -> HwEncoder {
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
+
+    let mut best_encoder = HwEncoder::Software;
+
+    unsafe {
+        let factory: Result<IDXGIFactory1, _> = CreateDXGIFactory1();
+        let factory = match factory {
+            Ok(f) => f,
+            Err(e) => {
+                log::warn!("Failed to create DXGI Factory: {}. Falling back to software encoder.", e);
+                return best_encoder;
+            }
+        };
+
+        let mut adapter_index = 0;
+
+        while let Ok(adapter) = factory.EnumAdapters1(adapter_index) {
+            if let Ok(desc) = adapter.GetDesc1() {
+                if (desc.Flags & 2) != 0 { // DXGI_ADAPTER_FLAG_SOFTWARE
+                    adapter_index += 1;
+                    continue;
+                }
+
+                // 0x10DE - NVIDIA
+                // 0x1002 - AMD
+                // 0x8086 - Intel
+                match desc.VendorId {
+                    0x10DE => {
+                        log::info!("Detected NVIDIA GPU. Enabling NVENC.");
+                        return HwEncoder::NvidiaNvenc;
+                    }
+                    0x1002 => {
+                        log::info!("Detected AMD GPU. Enabling AMF.");
+                        return HwEncoder::AmdAmf;
+                    }
+                    0x8086 => {
+                        log::info!("Detected Intel GPU.");
+                        if best_encoder == HwEncoder::Software {
+                            best_encoder = HwEncoder::IntelQsv;
+                        }
+                    }
+                    _ => {
+                        log::debug!("Detected unknown GPU Vendor ID: {}", desc.VendorId);
+                    }
+                }
+            }
+            adapter_index += 1;
+        }
+    }
+
+    best_encoder
+}
+
 fn writer_thread_main(
     output_path: impl AsRef<Path>,
     width: u32,
@@ -130,19 +192,55 @@ fn writer_thread_main(
         return Err(RecorderError::FFmpegNotFound(err_msg));
     }
 
-    // TODO: Add support for GPU acceleration
-    let args = [
+    let encoder = detect_best_hw_encoder();
+    let size_str = format!("{}x{}", width, height);
+    let fps_str = fps.to_string();
+
+    let mut args = vec![
         "-f", "rawvideo",
         "-pix_fmt", "bgra",
-        "-s", &format!("{}x{}", width, height),
-        "-r", &fps.to_string(),
+        "-s", &size_str,
+        "-r", &fps_str,
         "-i", "-", // Read from stdin
-        "-c:v", "libx264",
-        "-preset", "superfast",
-        "-crf", "17", // Constant Rate Factor, good balance of quality and size
+        // "-c:v", "libx264",
+        // "-preset", "superfast",
+        // "-crf", "24", // Constant Rate Factor, good balance of quality and size
         "-y", // Overwrite output file if it exists
         output_path.as_ref().to_str().unwrap(),
     ];
+
+    match encoder {
+        HwEncoder::NvidiaNvenc => {
+            args.extend_from_slice(&[
+                "-c:v", "h264_nvenc",
+                "-preset", "p3",
+                "-cq", "24",
+            ]);
+        }
+        HwEncoder::AmdAmf => {
+            args.extend_from_slice(&[
+                "-c:v", "h264_amf",
+                "-quality", "speed",
+                "-qp_i", "24", "-qp_p", "24", "-qp_b", "24",
+            ]);
+        }
+        HwEncoder::IntelQsv => {
+            args.extend_from_slice(&[
+                "-c:v", "h264_qsv",
+                "-preset", "fast",
+                "-global_quality", "24",
+            ]);
+        }
+        HwEncoder::Software => {
+            args.extend_from_slice(&[
+                "-c:v", "libx264",
+                "-preset", "superfast",
+                "-crf", "24",
+            ]);
+        }
+    }
+
+    dbg!(&args);
 
     let mut child = Command::new(ffmpeg_path.as_ref())
         .args(&args)
@@ -170,7 +268,7 @@ fn writer_thread_main(
     });
 
     while let Ok(frame) = frame_receiver.recv() {
-        if let Err(e) = stdin.write_all(&frame) {
+        if let Err(e) = stdin.write_all(&frame) { // it's fkung bottleneck, and it's peace of shit!!!!!!!!
             // Stop waiting for frames if pipe is broken
             log::error!("Failed to write to FFmpeg stdin: {}. Stopping.", e);
             break;
