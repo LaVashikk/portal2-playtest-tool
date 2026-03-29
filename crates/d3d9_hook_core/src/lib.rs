@@ -20,8 +20,7 @@ use recorder::{CAPTURE_SCALE, FRAME_SKIP, RECORDER, RecorderError};
 use windows::core::{HRESULT, PCSTR};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct3D9::{
-    D3DBACKBUFFER_TYPE_MONO, D3DDEVICE_CREATION_PARAMETERS, D3DLOCKED_RECT, D3DPRESENT_PARAMETERS,
-    D3DSURFACE_DESC, IDirect3D9, IDirect3DDevice9, D3DPOOL_SYSTEMMEM, D3DTEXF_NONE,
+    D3DBACKBUFFER_TYPE_MONO, D3DDEVICE_CREATION_PARAMETERS, D3DLOCKED_RECT, D3DPOOL_SYSTEMMEM, D3DPRESENT_PARAMETERS, D3DSURFACE_DESC, D3DTEXF_NONE, IDirect3D9, IDirect3DDevice9, IDirect3DSurface9
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 use windows::Win32::System::Memory::{VirtualProtect, PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS};
@@ -61,7 +60,6 @@ pub struct Callbacks {
     pub recording_is_running: fn() -> bool,
     pub recording_stop: fn(),
     pub recording_restart: fn(),
-    pub recording_send_frame: fn(Vec<u8>) -> Result<(), RecorderError>,
 }
 
 struct HookState {
@@ -79,6 +77,16 @@ struct HookState {
     present_installed: bool,
     reset_installed: bool,
     device_notified: bool,
+
+    // recording shit
+    pub capture_cache: Option<CaptureCache>,
+}
+
+pub struct CaptureCache {
+    pub intermediate_surface: IDirect3DSurface9,
+    pub final_surface: IDirect3DSurface9,
+    pub width: u32,
+    pub height: u32,
 }
 
 unsafe impl Send for HookState {}
@@ -95,6 +103,8 @@ static STATE: LazyLock<Mutex<HookState>> = LazyLock::new(|| {
         present_installed: false,
         reset_installed: false,
         device_notified: false,
+
+        capture_cache: None,
     })
 });
 
@@ -251,13 +261,15 @@ unsafe extern "system" fn hooked_create_device(
 unsafe extern "system" fn hooked_reset(
     this: IDirect3DDevice9,
     params: *mut D3DPRESENT_PARAMETERS,
-) -> HRESULT {
+) -> HRESULT { // TODO here
     // Pre-reset callback
     {
-        let st = STATE.lock().unwrap();
+        let mut st = STATE.lock().unwrap();
         if let Some(cb) = st.callbacks {
             (cb.on_pre_reset)();
         }
+
+        st.capture_cache = None;
     }
 
     // Stop recorder before reset. It will be restarted on the next Present call.
@@ -295,18 +307,23 @@ unsafe extern "system" fn hooked_present(
     dirty: *const c_void,
 ) -> HRESULT {
     // Handle recording
+    let mut should_record = false;
     {
         static FRAME_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+        // todo: fucking mutex here. fix this, onу day... maybe
         let st = STATE.lock().unwrap();
         if let Some(cb) = st.callbacks {
             if !(cb.game_is_paused)() && (cb.recording_is_running)() { // TODO: мне все равно надо из custom_win/runtime крейта вызывать STOP_RECORDER. Мб тогда флаги ввести: PAUSE / STOPPED, без этих лишних хуков калбеков?
                 let frame_num = FRAME_COUNTER.fetch_add(1, Ordering::Relaxed);
                 if frame_num % FRAME_SKIP == 0 {
-                    capture_and_send_frame(&this, cb);
+                    should_record = true;
                 }
             }
         }
+    }
+    if should_record {
+        capture_and_send_frame(&this);
     }
 
     // Lazy on_device_created if we didn't notify yet (covers offsets path).
@@ -351,8 +368,8 @@ unsafe extern "system" fn hooked_present(
     hr
 }
 
-unsafe fn capture_and_send_frame(device: &IDirect3DDevice9, cb: &'static Callbacks) {
-    // 1. Get back buffer
+unsafe fn capture_and_send_frame(device: &IDirect3DDevice9) {
+    // Get back buffer
     let back_buffer = match device.GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO) {
         Ok(bb) => bb,
         Err(e) => {
@@ -366,99 +383,98 @@ unsafe fn capture_and_send_frame(device: &IDirect3DDevice9, cb: &'static Callbac
         return;
     }
 
-    let (capture_width, capture_height) = (desc.Width / CAPTURE_SCALE, desc.Height / CAPTURE_SCALE);
+    let capture_width = desc.Width / CAPTURE_SCALE;
+    let capture_height = desc.Height / CAPTURE_SCALE;
 
-    // 2. Create intermediate render target for downscaling
-    let mut intermediate_surface = None;
-    if device
-        .CreateRenderTarget(
-            capture_width,
-            capture_height,
-            desc.Format,
-            desc.MultiSampleType,
-            desc.MultiSampleQuality,
-            false, // Not lockable
-            &mut intermediate_surface,
-            std::ptr::null_mut(),
+    // Try to get cached surfaces
+    let mut cached_surfaces = {
+        let st = STATE.lock().unwrap();
+        st.capture_cache.as_ref().and_then(|cache|
+            Some((cache.intermediate_surface.clone(), cache.final_surface.clone()))
         )
-        .is_err()
-    {
-        return;
-    }
-    let intermediate_surface = match intermediate_surface {
-        Some(s) => s,
-        None => return,
     };
 
-    // 3. Use GPU to scale from back buffer to our smaller intermediate surface
-    if device
-        .StretchRect(
-            &back_buffer,
-            std::ptr::null(),
-            &intermediate_surface,
-            std::ptr::null(),
-            D3DTEXF_NONE,
-        )
-        .is_err()
-    {
-        return;
-    }
+    // If cache is missing, create new surfaces
+    if cached_surfaces.is_none() {
+        let mut intermediate_opt = None;
+        if device.CreateRenderTarget(
+            capture_width, capture_height, desc.Format,
+            desc.MultiSampleType, desc.MultiSampleQuality, false,
+            &mut intermediate_opt, std::ptr::null_mut(),
+        ).is_err() {
+            log::warn!("Failed to create intermediate surface");
+            return;
+        }
 
-    // 4. Create final system memory surface to copy to
-    let mut final_surface = None;
-    if device
-        .CreateOffscreenPlainSurface(
-            capture_width,
-            capture_height,
-            desc.Format,
-            D3DPOOL_SYSTEMMEM,
-            &mut final_surface,
-            std::ptr::null_mut(),
-        )
-        .is_err()
-    {
-        return;
-    }
-    let final_surface = match final_surface {
-        Some(s) => s,
-        None => return,
-    };
+        let mut final_opt = None;
+        if device.CreateOffscreenPlainSurface(
+            capture_width, capture_height, desc.Format,
+            D3DPOOL_SYSTEMMEM, &mut final_opt, std::ptr::null_mut(),
+        ).is_err() {
+            log::warn!("Failed to create final surface");
+            return;
+        }
 
-    // 5. Copy the now-small texture from GPU to CPU
-    if device
-        .GetRenderTargetData(&intermediate_surface, &final_surface)
-        .is_ok()
-    {
-        let mut locked_rect = D3DLOCKED_RECT::default();
-        if final_surface
-            .LockRect(&mut locked_rect, std::ptr::null(), 1)
-            .is_ok()
+        let intermediate_surface = intermediate_opt.unwrap();
+        let final_surface = final_opt.unwrap();
+
+        // save cache
         {
+            log::info!("create new cache!");
+            let mut st = STATE.lock().unwrap();
+            st.capture_cache = Some(CaptureCache {
+                intermediate_surface: intermediate_surface.clone(),
+                final_surface: final_surface.clone(),
+                width: capture_width,
+                height: capture_height,
+            });
+        }
+
+        cached_surfaces = Some((intermediate_surface, final_surface));
+    }
+
+    // Now we have valid surfaces
+    let (intermediate_surface, final_surface) = cached_surfaces.unwrap();
+
+    // Scale on GPU
+    if device.StretchRect(&back_buffer, std::ptr::null(), &intermediate_surface, std::ptr::null(), D3DTEXF_NONE).is_err() {
+        return;
+    }
+
+    // and copy to RAM
+    if device.GetRenderTargetData(&intermediate_surface, &final_surface).is_ok() {
+        let mut locked_rect = D3DLOCKED_RECT::default();
+        if final_surface.LockRect(&mut locked_rect, std::ptr::null(), 1).is_ok() {
             let bytes_per_pixel = 4;
             let target_stride = capture_width * bytes_per_pixel;
-            let mut frame_data =
-                Vec::with_capacity((capture_width * capture_height * bytes_per_pixel) as usize);
+            let total_bytes = (capture_width * capture_height * bytes_per_pixel) as usize;
 
-            let src_slice = std::slice::from_raw_parts(
-                locked_rect.pBits as *const u8,
-                (capture_height * locked_rect.Pitch as u32) as usize,
-            );
+            // Allocate memory once for the frame data
+            let mut frame_data = vec![0u8; total_bytes]; // TODO: add buffer-pull
+
+            let src_ptr = locked_rect.pBits as *const u8;
+            let dst_ptr = frame_data.as_mut_ptr();
 
             if locked_rect.Pitch as u32 == target_stride {
-                frame_data.extend_from_slice(src_slice);
+                // PERFECT match!
+                std::ptr::copy_nonoverlapping(src_ptr, dst_ptr, total_bytes);
             } else {
-                for y in 0..capture_height {
-                    let row_start = (y * locked_rect.Pitch as u32) as usize;
-                    let row_end = row_start + target_stride as usize;
-                    frame_data.extend_from_slice(&src_slice[row_start..row_end]);
+                // Bullshit copy, but it works and we don't have another option, i think
+                let pitch = locked_rect.Pitch as usize;
+                for y in 0..(capture_height as usize) {
+                    let src_row = src_ptr.add(y * pitch);
+                    let dst_row = dst_ptr.add(y * target_stride as usize);
+                    std::ptr::copy_nonoverlapping(src_row, dst_row, target_stride as usize);
                 }
             }
 
-            if let Err(e) = (cb.recording_send_frame)(frame_data) {
-                log::warn!("Failed to send frame to recorder: {:?}", e);
-            }
-
             let _ = final_surface.UnlockRect();
+
+            if let Some(recorder_mutex) = recorder::RECORDER.get() {
+                if let Ok(recorder) = recorder_mutex.lock() {
+                    let _ = recorder.send_frame(frame_data); // todo: wanna cry? lmao
+                }
+            }
         }
     }
 }
