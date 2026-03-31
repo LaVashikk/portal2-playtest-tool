@@ -1,7 +1,7 @@
 {
   "title": "Vista Generic",
-  "widgets": [
 
+  "widgets": [
     {
       "type": "OneToTen",
       "text": "Please rate your enjoyment of this section.",

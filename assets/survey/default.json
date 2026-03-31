@@ -1,5 +1,10 @@
+
 {
   "title": "Example of Feedback Form",
+  "send_with_demo": true,
+  "send_with_logs": true,
+  "send_with_recording": true,
+
   "widgets": [
     {
       "type": "TextBlock",

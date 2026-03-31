@@ -1,3 +1,14 @@
 {
-  "mod_key": ""
+  "mod_key": "",
+
+  "bug_report_config": "bug_report.json",
+  "bug_report_icon": "❗",
+
+  "save_console_logs": true,
+  "save_demos": false,
+
+  "save_recordings": true,
+  "recording_fps": 10,
+  "recording_frame_skip": 10,
+  "recording_resolution": 720
 }

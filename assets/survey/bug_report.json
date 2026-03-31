@@ -1,5 +1,10 @@
 {
   "title": "Feedback & Bug Report",
+  "embed_color": "255 165 0",
+  "send_with_demo": false,
+  "send_with_logs": true,
+  "post_hook_command": "gameui_hide",
+
   "widgets": [
     {
       "type": "RadioChoices",

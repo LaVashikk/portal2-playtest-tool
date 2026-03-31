@@ -16,21 +16,49 @@ mod bug_report;
 pub use survey::SurveyWin;
 pub use bug_report::BugReportWin;
 
-const DEFAULT_SURVEY: &str = "survey/default.json";
+const DEFAULT_SURVEY: &str = "default.json";
 const SERVER_URL: &str = "https://lab.lavashik.dev/p2_survey/submit";
 // Global, write-once container for the moderator key, loaded from config.json.
-pub static GLOBAL_MOD_KEY: OnceLock<String> = OnceLock::new();
+pub static GLOBAL_SURVEY_CONFIG: OnceLock<ClientConfig> = OnceLock::new();
 // Global, thread-safe, mutable string to hold the current status of the network request.
 pub static REQUEST_STATUS: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::from("idle")));
 
 /// Helper struct to deserialize the client configuration.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub struct ClientConfig {
     pub mod_key: String,
+
+    pub bug_report_config: String,
+    pub bug_report_icon: String,
+
+    pub save_demos: bool,
+    pub save_console_logs: bool,
+    pub save_recordings: bool,
+
+    pub recording_fps: i32,
+    pub recording_frame_skip: u32,
+    pub recording_resolution: u32,
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        log::error!("Triggered new config");
+        Self {
+            mod_key: Default::default(),
+            bug_report_config: "bug_report.json".to_string(),
+            bug_report_icon: "❗".to_string(),
+            save_demos: false,
+            save_console_logs: false,
+            save_recordings: false,
+            recording_fps: 15,
+            recording_frame_skip: 24,
+            recording_resolution: 520,
+        }
+    }
 }
 
 /// Sets the global request status in a thread-safe manner.
-pub fn set_request_status(s: impl Into<String>) {
+fn set_request_status(s: impl Into<String>) {
     if let Ok(mut guard) = REQUEST_STATUS.lock() {
         *guard = s.into();
     }

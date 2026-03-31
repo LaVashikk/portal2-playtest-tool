@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use indexmap::IndexMap;
 
@@ -74,6 +76,17 @@ impl WidgetConfig {
 #[derive(Deserialize, Debug, Default)]
 pub struct FormConfig {
     pub title: String,
+    pub embed_color: Option<String>, // format: "R G B"
+    #[serde(default)]
+    pub send_with_demo: bool,
+    #[serde(default)]
+    pub send_with_logs: bool,
+    #[serde(default)]
+    pub send_with_recording: bool,
+    // pub send_with_screenshot: bool,
+    #[serde(default)]
+    pub post_hook_command: Option<String>,
+
     pub widgets: Vec<WidgetConfig>,
 }
 
@@ -121,6 +134,8 @@ pub struct FormSubmission {
     pub game_timestamp: f32,
     pub submission_timestamp: u64,
     pub answers: IndexMap<String, String>,
+    pub custom_embed_color: Option<i32>,
+    pub files: Vec<(String, String)>, // (file_id, file_name)
 
     #[serde(flatten)]
     pub extra_data: IndexMap<String, serde_json::Value>,
