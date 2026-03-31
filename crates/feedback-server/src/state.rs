@@ -1,4 +1,5 @@
 use crate::models::{ModeratorKeyData, SubmissionEvent};
+use crate::file_manager::FileManager;
 use dashmap::DashMap;
 use indexmap::IndexMap;
 use serde::{de::DeserializeOwned, Serialize};
@@ -10,15 +11,13 @@ use tokio::sync::broadcast;
 
 // alias for thread-safe key store
 pub type KeyStore = Arc<DashMap<String, ModeratorKeyData>>;
-// alias for safety access to files
-pub type DataIndex = Arc<DashMap<Uuid, PathBuf>>;
 
 // The shared application state
 #[derive(Clone)]
 pub struct ServerState {
     pub key_store: KeyStore,
     pub submission_sender: broadcast::Sender<SubmissionEvent>,
-    pub data_index: DataIndex,
+    pub file_manager: Arc<FileManager>,
 }
 
 impl TypeMapKey for ServerState {
@@ -33,24 +32,27 @@ impl ServerState {
         });
         info!("Loaded {} keys from disk.", key_store.len());
 
-        let data_index = load_map_from_disk::<Uuid, PathBuf>("index.json").unwrap_or_else(|e| {
-            warn!("Could not load index.json: {}. Starting empty.", e);
-            Arc::new(DashMap::new())
-        });
-        info!("Loaded {} index entries from disk.", data_index.len());
-
         let (sender, _) = broadcast::channel(100);
+
+        // Parse max storage from .env or default to 5000 MB
+        let max_storage_mb = std::env::var("MAX_STORAGE_MB")
+            .unwrap_or_else(|_| "5000".to_string())
+            .parse::<u64>()
+            .unwrap_or(5000);
+
+        let base_dir = std::env::var("BASE_DIR").unwrap_or_else(|_| ".".to_string());
+        let file_manager = Arc::new(FileManager::new(max_storage_mb, base_dir));
 
         Self {
             key_store,
             submission_sender: sender,
-            data_index,
+            file_manager,
         }
     }
 
     pub fn save_state_to_disk(&self) -> io::Result<()> { // sqlite? no, thanks! :PP
         save_map_to_disk("keys.json", &self.key_store)?;
-        save_map_to_disk("index.json", &self.data_index)?;
+        self.file_manager.save_to_disk();
         Ok(())
     }
 

@@ -2,6 +2,7 @@ mod discord_bot;
 mod http_server;
 mod models;
 mod state;
+mod file_manager;
 
 use crate::state::ServerState;
 use serenity::prelude::*;
@@ -13,6 +14,11 @@ async fn main() {
     dotenv().ok();
     tracing_subscriber::fmt::init();
     let app_state = ServerState::new();
+
+    let fm_clone = app_state.file_manager.clone();
+    tokio::spawn(async move {
+        fm_clone.run_background_tasks().await;
+    });
 
     // --- Start Discord Bot ---
     let discord_token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");

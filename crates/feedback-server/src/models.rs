@@ -1,5 +1,6 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use crate::file_manager::FileMetadata;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FormSubmission {
@@ -10,6 +11,8 @@ pub struct FormSubmission {
     pub game_timestamp: f32,
     pub submission_timestamp: u64,
     pub answers: IndexMap<String, String>,
+    pub custom_embed_color: Option<i32>,
+    pub files: Vec<(String, String)>, // (file_id, file_name)
 
     #[serde(flatten)]
     pub extra_data: IndexMap<String, serde_json::Value>,
@@ -32,5 +35,5 @@ pub struct SubmissionEvent {
     pub submission: FormSubmission,
     pub submission_bytes: Vec<u8>,
     pub filename: String,
-    // pub files: Vec<PathBuf>
+    pub attached_files: Vec<FileMetadata>,
 }
