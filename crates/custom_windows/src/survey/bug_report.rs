@@ -1,9 +1,11 @@
+use std::sync::OnceLock;
+
 use crate::{SharedState, Window};
 use super::{FormAction, WidgetForm};
 use egui::{Align2, Color32, Stroke};
 use portal2_sdk::Engine;
 
-const BUG_ICON: &str = "❗";
+pub static BUG_ICON: OnceLock<String> = OnceLock::new();
 
 #[derive(Debug)]
 pub struct BugReportWin {
@@ -19,11 +21,13 @@ impl BugReportWin {
         }
     }
 
-    fn save_form_results(&self, engine: &Engine) -> Result<(), String> {
+    fn save_form_results(&self, engine: &Engine) -> anyhow::Result<()> {
         let mut extra_data = indexmap::IndexMap::new();
-        let current_angles = engine.client().get_view_angles();
-        extra_data.insert("player_angles".to_string(), serde_json::json!(format!("Vector({}, {}, {})", current_angles.x, current_angles.y, current_angles.z)));
-        extra_data.insert("TODO".to_string(), serde_json::json!(String::from("WIP. This is not complete")));
+        let current_angles = engine.client().get_view_angles(); // todo!
+        let player_pos = engine.entities().find_by_classname(None, "player").map(|ent| ent.get_origin(engine.server_tools())).unwrap_or_default();
+        extra_data.insert("Raw Timestamp".to_string(), serde_json::json!(engine.client().get_last_time_stamp()));
+        extra_data.insert("Player Position".to_string(), serde_json::json!(player_pos.to_string()));
+        extra_data.insert("Player Angles".to_string(), serde_json::json!(current_angles.to_string()));
 
         self.form.save_results(engine, Some(extra_data))
     }
@@ -70,7 +74,7 @@ impl BugReportWin {
                 painter.text(
                     rect.center(),
                     Align2::CENTER_CENTER,
-                    BUG_ICON,
+                    BUG_ICON.get().expect("Unreachable. Already inited by super::init_survey"),
                     egui::FontId::proportional(BUTTON_SIZE * 0.6),
                     icon_color,
                 );

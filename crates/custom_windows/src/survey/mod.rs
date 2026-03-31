@@ -1,23 +1,27 @@
+use std::io::Read;
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
-use std::fs;
+use std::{fs, thread};
 use std::path::PathBuf;
 
+use anyhow::{Context, bail};
 use indexmap::IndexMap;
 use portal2_sdk::Engine;
 
 mod types;
 use types::*;
-mod utils;
 
 mod survey;
+mod save_files;
 mod bug_report;
+pub use save_files::*; // TODO: remove this. temp for debuggind purpose
 pub use survey::SurveyWin;
 pub use bug_report::BugReportWin;
 
 const DEFAULT_SURVEY: &str = "default.json";
 const SERVER_URL: &str = "https://lab.lavashik.dev/p2_survey/submit";
+const SERVER_URL_FILE: &str = "https://lab.lavashik.dev/p2_survey/upload";
 // Global, write-once container for the moderator key, loaded from config.json.
 pub static GLOBAL_SURVEY_CONFIG: OnceLock<ClientConfig> = OnceLock::new();
 // Global, thread-safe, mutable string to hold the current status of the network request.
@@ -69,22 +73,53 @@ pub fn get_request_status() -> String {
     REQUEST_STATUS.lock().map(|g| g.clone()).unwrap_or_default()
 }
 
+pub fn get_addon_dir() -> PathBuf {
+    portal2_sdk::utils::get_dll_directory().unwrap_or_default().join("survey")
+}
+pub const SURVEY_ANSWERS_RELATIVE: &str = "survey_answers";
+
+pub fn get_answer_dir() -> PathBuf {
+    let engine = crate::ENGINE.get().unwrap();
+    let game_dir: PathBuf = engine.engine_server().get_game_dir().into();
+    game_dir.join(SURVEY_ANSWERS_RELATIVE)
+}
+
+pub fn get_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())
+        .unwrap_or_default()
+        .as_secs()
+}
+
 pub fn init_survey() {
     // Reads 'SURVEY/config.json' and initializes the global mod-key
-    let path = utils::get_dll_directory().unwrap_or_default().join("survey/config.json"); // todo: temporary solution
-    let key = std::fs::read_to_string(path.clone())
+    let path = get_addon_dir().join("config.json");
+    let config = std::fs::read_to_string(path.clone())
         .ok()
         .and_then(|s| serde_json::from_str::<ClientConfig>(&s).ok())
-        .map(|c| c.mod_key)
         .unwrap_or_else(|| {
             log::warn!(
                 "Could not read or parse 'survey/config.json'. Surveys will be offline.",
             );
-            String::new()
+            ClientConfig::default()
         });
 
+    // todo: check mod-key here
+
+    let _ = bug_report::BUG_ICON.set(config.bug_report_icon.clone());
+
+    // let's create all necessary directories
+    let answers_dir = get_answer_dir();
+    ["demos", "logs", "records"].iter().for_each(|subdir| {
+        fs::create_dir_all(answers_dir.join(subdir))
+            .unwrap_or_else(|e| log::error!("Failed to create '{}' folder: {}", subdir, e));
+    });
+
+    recorder::init_recorder_const(config.recording_frame_skip as usize, config.recording_fps, config.recording_resolution);
+    save_files::init_saver(&config);
     // This will only succeed on the first call.
-    let _ = GLOBAL_MOD_KEY.set(key);
+    let _ = GLOBAL_SURVEY_CONFIG.set(config);
     set_request_status("idle");
 }
 
@@ -119,12 +154,9 @@ impl WidgetForm {
         if relative_path.extension().is_none() {
             relative_path.set_extension("json");
         }
-        if relative_path.components().count() == 1 {
-            relative_path = std::path::PathBuf::from("survey").join(relative_path);
-        }
 
         let final_config_path_str = relative_path.to_string_lossy().into_owned();
-        let config_path = utils::get_dll_directory().unwrap_or_default().join(&final_config_path_str); // todo: temporary solution
+        let config_path = get_addon_dir().join(&final_config_path_str);
 
         // Read the configuration file into a string
         let json_str = match fs::read_to_string(&config_path) {
@@ -182,6 +214,30 @@ impl WidgetForm {
         self.scroll_to_top = true;
     }
 
+    fn send_file(mod_key: &str, file_path: &PathBuf) -> anyhow::Result<(String, String)> {
+        let file = fs::File::open(file_path)?;
+        let file_name = file_path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+        let len = file.metadata().context("Failed to read metadata")?.len();
+
+        let upload_res = ureq::post(SERVER_URL_FILE)
+            .header("X-Moderator-Key", mod_key)
+            .header("X-File-Name", file_name)
+            .header("Content-Length", &len.to_string())
+            .send(ureq::SendBody::from_owned_reader(file.take(len)))
+            .context("Failed to upload file")?;
+
+        let upload_json: serde_json::Value = upload_res
+            .into_body()
+            .read_json()
+            .context("Failed to parse response JSON")?;
+
+        let file_id = upload_json["file_id"]
+            .as_str()
+            .context("No file_id in response")?;
+
+        Ok((file_id.to_string(), file_name.to_string()))
+    }
+
     /// Collects all data and saves it to a structured JSON file.
     /// The provided `base_data` HashMap is used as a base, and common information
     /// (user, answers, etc.) is added to it before serialization.
@@ -189,7 +245,7 @@ impl WidgetForm {
         &self,
         engine: &Engine,
         extra_data: Option<IndexMap<String, serde_json::Value>>,
-    ) -> Result<(), String> {
+    ) -> anyhow::Result<()> {
         // Collect common metadata
         let client = engine.client();
         let local_player_idx = client.get_local_player();
@@ -197,10 +253,7 @@ impl WidgetForm {
             .get_player_info(local_player_idx)
             .map(|info| (info.name().to_string(), info.xuid.to_string()))
             .unwrap_or_else(|| ("<unknown>".to_string(), "0".to_string()));
-        let submission_timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
-            .as_secs();
+        let submission_timestamp = get_timestamp();
 
         // Format answers as "question: answer"
         let mut answers = IndexMap::new();
@@ -210,79 +263,159 @@ impl WidgetForm {
             }
         }
 
-        // Create the final structure
-        let submission = FormSubmission {
-            survey_id: self.config_path.clone(),
-            user_name,
-            user_xuid,
-            map_name: client.get_level_name().to_string(),
-            game_timestamp: client.get_last_time_stamp(),
-            submission_timestamp,
-            answers,
-            extra_data: extra_data.unwrap_or_default(),
-        };
-
-        // Generate dynamic filename and path
-        let config_stem = PathBuf::from(&self.config_path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown_config")
-            .to_string();
+        let custom_embed_color = self.config.embed_color.clone().map(|s| {
+            let parts: Vec<&str> = s.split_whitespace().collect();
+            if parts.len() == 3 {
+                let r = parts[0].parse::<u8>().unwrap_or_default() as i32;
+                let g = parts[1].parse::<u8>().unwrap_or_default() as i32;
+                let b = parts[2].parse::<u8>().unwrap_or_default() as i32;
+                (r << 16) + (g << 8) + b
+            } else {
+                0
+            }
+        });
 
         let map_name = client.get_level_name_short()
             .replace(|c: char| !c.is_alphanumeric() && c != '_', ""); // Sanitize map name
+        let map_name_string = client.get_level_name();
+        let game_timestamp = client.get_last_time_stamp();
 
-        let filename = format!(
-            "{}_{}_{}.json",
-            config_stem, map_name, submission_timestamp
+        let config_path = self.config_path.clone();
+        let (survey_with_demo, survey_with_logs, survey_with_recording) = (
+            self.config.send_with_demo, self.config.send_with_logs, self.config.send_with_recording
         );
 
-        let output_dir = utils::get_dll_directory().unwrap_or_default().join("survey/answers"); // todo: temporary solution
-        fs::create_dir_all(&output_dir).map_err(|e| format!("Failed to create output directory: {}", e))?;
-        let output_path = output_dir.join(filename);
-
-        // Serialize the final combined map and save
-        let json_data = serde_json::to_string_pretty(&submission).map_err(|e| e.to_string())?;
-        fs::write(output_path, &json_data).map_err(|e| e.to_string())?;
-
-        // --- Asynchronous Network Submission ---
-        let url = SERVER_URL.to_string();
-        let key = GLOBAL_MOD_KEY.get().cloned().unwrap_or_default();
-        let body_for_thread = json_data;
-
-        if key.is_empty() {
-            log::warn!("Failed to send survey to server: The mod-key is not configured.");
-            return Ok(());
+        // hook command
+        if let Some(hook_cmd) = &self.config.post_hook_command {
+            client.execute_client_cmd_unrestricted(hook_cmd);
         }
 
-        set_request_status("sending...");
-        std::thread::spawn(move || {
-            let result = ureq::post(&url)
-                .set("Content-Type", "application/json")
-                .set("X-Moderator-Key", &key)
-                .send_string(&body_for_thread);
+        // Peace of shit, but it's... works.. kinda
+        thread::spawn(move || {
+            let config = GLOBAL_SURVEY_CONFIG.get()
+                .expect("Unreachable: Global survey config not set.");
+
+            // First, process files!
+            let mut handles = Vec::with_capacity(3);
+            let mut files = Vec::with_capacity(3);
+            if !config.mod_key.is_empty() {
+                if config.save_console_logs && survey_with_logs {
+                    let handle = thread::spawn(|| {
+                        if let Some(log_file) = save_files::LOGS_FILE.lock().unwrap().as_ref() {
+                            return Self::send_file(&config.mod_key, log_file)
+                        }
+                        bail!("Does not have logs!")
+                    });
+                    handles.push(handle);
+                }
+
+                if config.save_demos && survey_with_demo {
+                    save_files::stop_demo_recording();
+                    let handle = thread::spawn(move || {
+                        if let Ok(zip_file) = save_files::pack_demos() {
+                            return Self::send_file(&config.mod_key, &zip_file)
+                        }
+                        bail!("Failed to pack demos!")
+                    });
+                    handles.push(handle);
+                }
+
+                if config.save_recordings && survey_with_recording {
+                    save_files::stop_recording();
+
+                    let handle = thread::spawn(|| {
+                        if let Some(video_file) = save_files::VIDEO_FILE.lock().unwrap().take() {
+                            return Self::send_file(&config.mod_key, &video_file)
+                        }
+                        bail!("Does not have video!")
+                    });
+                    handles.push(handle);
+                }
+            }
+
+            for handle in handles {
+                let file_uuid = handle.join().unwrap();
+                match file_uuid {
+                    Ok(uuid) => files.push(uuid),
+                    Err(e) => log::error!("Failed to send file: {}", e),
+                }
+            }
+
+            // Generate dynamic filename and path
+            let config_stem = PathBuf::from(&config_path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown_config")
+                .to_string();
+
+            // Create the final structure
+            let submission = FormSubmission {
+                survey_id: config_path,
+                user_name,
+                user_xuid,
+                map_name: map_name_string,
+                game_timestamp,
+                submission_timestamp,
+                answers,
+                custom_embed_color,
+                files,
+
+                extra_data: extra_data.unwrap_or_default(),
+            };
+
+            let filename = format!(
+                "{}_{}_{}.json",
+                config_stem, map_name, submission_timestamp
+            );
+
+            let output_path = get_answer_dir().join(filename);
+
+            // Serialize the final combined map and save
+            let json_data = serde_json::to_string_pretty(&submission).map_err(|e| e.to_string()).unwrap();
+            fs::write(output_path, &json_data).map_err(|e| e.to_string()).unwrap();
+
+            // Send to server
+            let body_for_thread = json_data;
+            if config.mod_key.is_empty() {
+                log::warn!("Failed to send survey to server: The mod-key is not configured.");
+                return;
+            }
+
+            set_request_status("sending...");
+            let agent: ureq::Agent = ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .build()
+                .into();
+
+            let result = agent.post(SERVER_URL)
+                .header("Content-Type", "application/json")
+                .header("X-Moderator-Key", &config.mod_key)
+                .send(&body_for_thread);
 
             match result {
-                Ok(_response) => {
-                    set_request_status("sent successfully");
-                    log::info!("Survey submitted successfully!");
-                }
-                Err(ureq::Error::Status(code, response)) => {
-                    set_request_status(format!("error: HTTP {}", code));
-                    let response_text = response.into_string().unwrap_or_default();
-                    let user_message = match code {
-                        401 | 403 => "Survey submission failed: Invalid Moderator Key.".to_string(),
-                        502 => "Survey submission failed: The server is temporarily unavailable (Bad Gateway).".to_string(),
-                        500..=599 => format!("Survey submission failed: The server encountered an internal error (Code: {}).", code),
-                        400..=499 => format!("Survey submission failed: There was a problem with the request (Code: {}). Please report this.", code),
-                        _ => format!("Survey submission failed with an unexpected error (Code: {}). Please report this.", code),
-                    };
-                    log::error!("{}", user_message);
-                    log::debug!(
-                        "Survey submission failed with status code {}. Response: {}",
-                        code,
-                        response_text
-                    );
+                Ok(response) => {
+                    let code = response.status().as_u16();
+                    if response.status().is_success() {
+                        set_request_status("sent successfully");
+                        log::info!("Survey submitted successfully!");
+                    } else {
+                        set_request_status(format!("error: HTTP {}", code));
+                        let response_text = response.into_body().read_to_string().unwrap_or_default();
+
+                        let user_message = match code {
+                            401 | 403 => "Survey submission failed: Invalid Moderator Key.".to_string(),
+                            502 => "Survey submission failed: The server is temporarily unavailable (Bad Gateway).".to_string(),
+                            500..=599 => format!("Survey submission failed: The server encountered an internal error (Code: {}).", code),
+                            400..=499 => format!("Survey submission failed: There was a problem with the request (Code: {}). Please report this.", code),
+                            _ => format!("Survey submission failed with an unexpected error (Code: {}). Please report this.", code),
+                        };
+                        log::error!("{}", user_message);
+                        log::debug!(
+                            "Survey submission failed with status code {}. Response: {}",
+                            code,
+                            response_text
+                        );
+                    }
                 }
                 Err(e) => { // This is for transport errors (network issues)
                     set_request_status("error: network issue".to_string());
