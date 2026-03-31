@@ -1,6 +1,7 @@
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::os::windows::process::CommandExt;
 use std::sync::{Mutex, OnceLock};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{self, JoinHandle};
@@ -9,10 +10,20 @@ use thiserror::Error;
 // Recorder specific statics
 pub const FFMPEG_PATH: &str = "ffmpeg.exe";
 pub static RECORDER: OnceLock<Mutex<Recorder>> = OnceLock::new();
-pub const FRAME_SKIP: usize = 10;
-pub const RECORDING_FPS: i32 = 20; // todo: place it in config file, not hard-coded
-pub const CAPTURE_SCALE: u32 = 2; // Capture at 1/2 resolution (e.g., 1920x1080 -> 960x540)
+pub static FRAME_SKIP: OnceLock<usize> = OnceLock::new();
+pub static RECORDING_FPS: OnceLock<i32> = OnceLock::new();
+pub static CAPTURE_RESOLUTION: OnceLock<u32> = OnceLock::new();
 
+pub fn init_recorder_const(frame_skip: usize, recording_fps: i32, recording_resolution: u32) {
+    FRAME_SKIP.set(frame_skip).unwrap();
+    RECORDING_FPS.set(recording_fps).unwrap();
+    CAPTURE_RESOLUTION.set(recording_resolution).unwrap();
+}
+
+pub enum RecorderCommand {
+    Frame(Vec<u8>),
+    Flush,
+}
 
 #[derive(Error, Debug)]
 pub enum RecorderError {
@@ -36,10 +47,11 @@ pub enum RecorderError {
 
 pub struct Recorder {
     is_running: bool,
-    resolution: (u32, u32),
+    resolution: (u32, u32), // TODO! REMOVE IT!!!!!
     writer_thread: Option<JoinHandle<Result<(), RecorderError>>>,
-    frame_sender: Option<Sender<Vec<u8>>>,
+    frame_sender: Option<Sender<RecorderCommand>>,
     ffmpeg_path: PathBuf,
+    pub last_record_path: Option<PathBuf>,
 }
 
 impl Recorder {
@@ -50,6 +62,7 @@ impl Recorder {
             writer_thread: None,
             frame_sender: None,
             ffmpeg_path: ffmpeg_path.as_ref().to_path_buf(),
+            last_record_path: None,
         }
     }
 
@@ -63,12 +76,13 @@ impl Recorder {
         }
 
         let (w, h) = self.resolution;
-        let (frame_sender, frame_receiver) = channel::<Vec<u8>>();
+        let (frame_sender, frame_receiver) = channel();
         self.frame_sender = Some(frame_sender);
 
         let output_path = output_path.as_ref().to_path_buf();
         let ffmpeg_path = self.ffmpeg_path.clone();
 
+        self.last_record_path = Some(output_path.clone());
         self.writer_thread = Some(thread::spawn(move || {
             writer_thread_main(output_path, w, h, fps, ffmpeg_path, frame_receiver)
         }));
@@ -98,15 +112,20 @@ impl Recorder {
     }
 
     pub fn send_frame(&self, frame_data: Vec<u8>) -> Result<(), RecorderError> {
-        if self.frame_sender.is_none() {
-            return Err(RecorderError::NotRunning);
+        // log::debug!("Send frame: {}", frame_data.len());
+        if let Some(sender) = &self.frame_sender {
+            sender.send(RecorderCommand::Frame(frame_data)).map_err(|_| RecorderError::FrameSendError)
+        } else {
+            Err(RecorderError::NotRunning)
         }
+    }
 
-        self.frame_sender
-            .as_ref()
-            .unwrap()
-            .send(frame_data)
-            .map_err(|_| RecorderError::FrameSendError)
+    pub fn flush(&self) -> Result<(), RecorderError> {
+        if let Some(sender) = &self.frame_sender {
+            sender.send(RecorderCommand::Flush).map_err(|_| RecorderError::StdinAcquire)
+        } else {
+            Err(RecorderError::NotRunning)
+        }
     }
 
     pub fn is_running(&self) -> bool {
@@ -122,8 +141,34 @@ pub enum HwEncoder {
     Software, // Fallback (libx264)
 }
 
+// Checking if hardware encoder DLLs are available
+fn is_hw_encoder_dll_available(dll_name: &str) -> bool {
+    use windows::Win32::System::LibraryLoader::LoadLibraryA;
+    use windows::Win32::Foundation::FreeLibrary;
+    use windows::core::PCSTR;
+
+    let mut name = String::from(dll_name);
+    name.push('\0');
+
+    unsafe {
+        match LoadLibraryA(PCSTR(name.as_ptr())) {
+            Ok(h_module) if !h_module.is_invalid() => {
+                let _ = FreeLibrary(h_module);
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+
 pub fn detect_best_hw_encoder() -> HwEncoder {
     use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
+
+    static BEST_ENCODER: OnceLock<HwEncoder> = OnceLock::new();
+    if let Some(encoder) = BEST_ENCODER.get() {
+        return *encoder;
+    }
 
     let mut best_encoder = HwEncoder::Software;
 
@@ -146,22 +191,31 @@ pub fn detect_best_hw_encoder() -> HwEncoder {
                     continue;
                 }
 
-                // 0x10DE - NVIDIA
-                // 0x1002 - AMD
-                // 0x8086 - Intel
                 match desc.VendorId {
-                    0x10DE => {
-                        log::info!("Detected NVIDIA GPU. Enabling NVENC.");
-                        return HwEncoder::NvidiaNvenc;
+                    0x10DE => { // Nvidia
+                        if is_hw_encoder_dll_available("nvEncodeAPI.dll") {
+                            log::info!("Detected NVIDIA GPU. Enabling NVENC.");
+                            return HwEncoder::NvidiaNvenc;
+                        } else {
+                            log::warn!("NVIDIA GPU detected, but nvEncodeAPI.dll is missing. Fallback to software.");
+                        }
                     }
-                    0x1002 => {
-                        log::info!("Detected AMD GPU. Enabling AMF.");
-                        return HwEncoder::AmdAmf;
+                    0x1002 => { // AMD
+                        if is_hw_encoder_dll_available("amfrt32.dll") {
+                            log::info!("Detected AMD GPU. Enabling AMF.");
+                            return HwEncoder::AmdAmf;
+                        } else {
+                            log::warn!("AMD GPU detected, but amfrt32.dll is missing. Fallback to software.");
+                        }
                     }
                     0x8086 => {
-                        log::info!("Detected Intel GPU.");
-                        if best_encoder == HwEncoder::Software {
-                            best_encoder = HwEncoder::IntelQsv;
+                        if is_hw_encoder_dll_available("libmfxhw32.dll") {
+                            log::info!("Detected Intel GPU. Enabling QSV.");
+                            if best_encoder == HwEncoder::Software {
+                                best_encoder = HwEncoder::IntelQsv;
+                            }
+                        } else {
+                            log::warn!("Intel GPU detected, but libmfxhw32.dll is missing. Fallback to software.");
                         }
                     }
                     _ => {
@@ -173,6 +227,7 @@ pub fn detect_best_hw_encoder() -> HwEncoder {
         }
     }
 
+    let _ = BEST_ENCODER.set(best_encoder);
     best_encoder
 }
 
@@ -182,7 +237,7 @@ fn writer_thread_main(
     height: u32,
     fps: i32,
     ffmpeg_path: impl AsRef<Path>,
-    frame_receiver: Receiver<Vec<u8>>,
+    frame_receiver: Receiver<RecorderCommand>,
 ) -> Result<(), RecorderError> {
     if !ffmpeg_path.as_ref().is_file() {
         let err_msg = format!(
@@ -202,11 +257,6 @@ fn writer_thread_main(
         "-s", &size_str,
         "-r", &fps_str,
         "-i", "-", // Read from stdin
-        // "-c:v", "libx264",
-        // "-preset", "superfast",
-        // "-crf", "24", // Constant Rate Factor, good balance of quality and size
-        "-y", // Overwrite output file if it exists
-        output_path.as_ref().to_str().unwrap(),
     ];
 
     match encoder {
@@ -215,6 +265,7 @@ fn writer_thread_main(
                 "-c:v", "h264_nvenc",
                 "-preset", "p3",
                 "-cq", "24",
+                "-pix_fmt", "yuv420p",
             ]);
         }
         HwEncoder::AmdAmf => {
@@ -240,17 +291,21 @@ fn writer_thread_main(
         }
     }
 
+    args.extend_from_slice(&[
+        "-y",
+        output_path.as_ref().to_str().unwrap(),
+    ]);
+
     dbg!(&args);
 
     let mut child = Command::new(ffmpeg_path.as_ref())
         .args(&args)
         .stdin(Stdio::piped())
-        .stdout(Stdio::null()) // Or Stdio::piped() to log ffmpeg output
-        .stderr(Stdio::piped()) // Capture stderr to log errors
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0)
         .spawn()
         .map_err(RecorderError::ProcessStart)?;
-
-    let mut stdin = child.stdin.take().ok_or(RecorderError::StdinAcquire)?;
 
     // This thread will log FFmpeg's stderr output without blocking
     let stderr = child.stderr.take();
@@ -267,17 +322,33 @@ fn writer_thread_main(
         }
     });
 
-    while let Ok(frame) = frame_receiver.recv() {
-        if let Err(e) = stdin.write_all(&frame) { // it's fkung bottleneck, and it's peace of shit!!!!!!!!
-            // Stop waiting for frames if pipe is broken
-            log::error!("Failed to write to FFmpeg stdin: {}. Stopping.", e);
-            break;
+    let stdin = child.stdin.take().ok_or(RecorderError::StdinAcquire)?;
+    let mut buffered_stdin = BufWriter::with_capacity(1024 * 1024 * 3, stdin);
+    // let mut buffered_stdin = stdin;
+
+    while let Ok(cmd) = frame_receiver.recv() {
+        match cmd {
+            RecorderCommand::Frame(frame) => {
+                if let Err(e) = buffered_stdin.write_all(&frame) { // it's fkung bottleneck, and it's peace of shit!! half-fixed with BufWriter
+                    // Stop waiting for frames if pipe is broken
+                    log::error!("Failed to write to FFmpeg stdin: {}. Stopping.", e);
+                    break;
+                }
+            },
+            RecorderCommand::Flush => {
+                if let Err(e) = buffered_stdin.flush() {
+                    log::error!("Failed to flush to FFmpeg: {}", e);
+                }
+            },
         }
     }
 
     // stdin is closed when it goes out of scope here, signaling EOF to ffmpeg
-    drop(stdin);
+    let _ = buffered_stdin.flush();
+    drop(buffered_stdin);
 
+    // who dare?
+    log::warn!("ffmpeg ded.");
     let status = child.wait().map_err(RecorderError::ProcessStart)?;
     log::debug!("FFmpeg process exited with status: {}", status);
 
