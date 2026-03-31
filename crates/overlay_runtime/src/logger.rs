@@ -1,4 +1,5 @@
 use log::{LevelFilter, Record};
+use portal2_sdk::utils::get_dll_directory;
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode, WriteLogger, SharedLogger};
 use std::fs::File;
 
@@ -54,7 +55,8 @@ impl SharedLogger for ToastLogger {
 
 /// Initializes the logging system.
 pub fn init() {
-    let log_file = File::create(LOG_FILE_PATH);
+    let log_file_path = get_dll_directory().unwrap_or_default().join(LOG_FILE_PATH);
+    let log_file = File::create(log_file_path);
 
     // simplelog now requires Vec<Box<dyn SharedLogger>>
     let mut loggers: Vec<Box<dyn SharedLogger>> = Vec::new();
