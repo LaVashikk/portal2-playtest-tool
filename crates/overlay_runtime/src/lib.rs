@@ -37,7 +37,7 @@ static FOCUS_HWND: OnceLock<SyncHWND> = OnceLock::new();
 /// Overlay controller that owns custom_windows windows and talks to portal2-sdk.
 pub struct UiManager {
     windows: Vec<Box<dyn custom_windows::Window + Send>>,
-    engine_instance: portal2_sdk::Engine,
+    engine_instance: &'static portal2_sdk::Engine, // todo: fcking workaround, because i need global engine for custom windows, and IM LAZY CHANGE ARCHITECTURE!
     input_context: Option<SendableContext>,
     cursor_visible_in_gui: bool,
     egui_wants_keyboard: bool,
@@ -51,7 +51,7 @@ pub struct SendableContext(pub *mut portal2_sdk::input_system::InputContextT);
 unsafe impl Send for SendableContext {}
 
 impl UiManager {
-    pub fn new(engine_instance: portal2_sdk::Engine) -> Self {
+    pub fn new(engine_instance: &'static portal2_sdk::Engine) -> Self {
         Self {
             windows: custom_windows::regist_windows(&engine_instance),
             shared_state: custom_windows::SharedState::default(),
@@ -179,20 +179,26 @@ pub fn on_device_created(hwnd: HWND, device: &IDirect3DDevice9) {
             }
         };
 
-        // TODO: or engine screen size, or renderer.get_screen_size
         let resolution = engine_instance.client().get_screen_size();
+
+        if custom_windows::ENGINE.set(engine_instance).is_err() {
+            unreachable!()
+        }
+
+        if OVERLAY_RUNTIME.set(Mutex::new(UiManager::new(custom_windows::ENGINE.get().unwrap()))).is_err() {
+            unreachable!()
+        }
+
         let ffmpeg_path = get_dll_directory().unwrap_or_default().join("ffmpeg.exe");
+        let scale = resolution.1 as f32 / *recorder::CAPTURE_RESOLUTION.get().unwrap() as f32;
+
         let _ = recorder::RECORDER.set(Mutex::new(
             Recorder::new(
-                resolution.0 as u32 / recorder::CAPTURE_SCALE,
-                resolution.1 as u32 / recorder::CAPTURE_SCALE,
+                (resolution.0 as f32 / scale) as u32,
+                (resolution.1 as f32 / scale) as u32,
                 ffmpeg_path,
             ),
         ));
-
-        if OVERLAY_RUNTIME.set(Mutex::new(UiManager::new(engine_instance))).is_err() {
-            unreachable!()
-        }
 
         unsafe {
             O_WNDPROC = Some(std::mem::transmute(SetWindowLongPtrW(
@@ -291,36 +297,15 @@ pub fn recording_is_running() -> bool {
     false
 }
 
-pub fn recording_restart() {
-    if let Some(recorder_mutex) = recorder::RECORDER.get() {
-        if let Ok(mut recorder) = recorder_mutex.lock() {
-            if let Err(err) = recorder.stop_recording() {
-                log::error!("Failed to stop recording: {}", err);
-            }
-
-        }
-    }
-}
-
 pub fn recording_stop() {
     if let Some(recorder_mutex) = recorder::RECORDER.get() {
         if let Ok(mut recorder) = recorder_mutex.lock() {
+            if !recorder.is_running() { return }
             if let Err(err) = recorder.stop_recording() {
                 log::error!("Failed to stop recording: {}", err);
             }
         }
     }
-}
-
-pub fn recording_send_frame(frame: Vec<u8>) -> Result<(), recorder::RecorderError> {
-    log::debug!("Got frames: {}", frame.len());
-    if let Some(recorder_mutex) = recorder::RECORDER.get() {
-        if let Ok(recorder) = recorder_mutex.lock() {
-            recorder.send_frame(frame)?;
-        }
-    }
-
-    Ok(())
 }
 
 pub static CALLBACKS: Callbacks = Callbacks {
@@ -332,8 +317,7 @@ pub static CALLBACKS: Callbacks = Callbacks {
     game_is_paused: is_paused_callback,
     recording_is_running,
     recording_stop,
-    recording_restart,
-    recording_send_frame,
+    recording_restart: recording_stop, // TODO: not really restart
 };
 
 /// Restores original WndProc and clears overlay state.

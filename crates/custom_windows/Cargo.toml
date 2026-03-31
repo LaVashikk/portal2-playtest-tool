@@ -10,8 +10,12 @@ log.workspace = true
 windows.workspace = true
 portal2-sdk.workspace = true
 
+anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 indexmap = { version = "2.2.6", features = ["serde"] }
-ureq = { version = "2.9.6", features = ["json"] }
+ureq = { version = "3.3", features = ["json"] }
 egui-notify = "0.19.0"
+recorder = { path = "../recorder" }
+zip = "8.4.0"
+# TODO: vpn
