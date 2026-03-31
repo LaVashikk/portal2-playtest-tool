@@ -16,7 +16,7 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
 
-use recorder::{CAPTURE_SCALE, FRAME_SKIP, RECORDER, RecorderError};
+use recorder::{CAPTURE_RESOLUTION, FRAME_SKIP, RECORDER, RecorderError};
 use windows::core::{HRESULT, PCSTR};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct3D9::{
@@ -85,6 +85,7 @@ struct HookState {
 pub struct CaptureCache {
     pub intermediate_surface: IDirect3DSurface9,
     pub final_surface: IDirect3DSurface9,
+    pub resolve_surface: Option<IDirect3DSurface9>,
     pub width: u32,
     pub height: u32,
 }
@@ -272,7 +273,7 @@ unsafe extern "system" fn hooked_reset(
         st.capture_cache = None;
     }
 
-    // Stop recorder before reset. It will be restarted on the next Present call.
+    // Stop recorder before reset. TODO: who restart it? nobody?
     {
         let st = STATE.lock().unwrap();
         if let Some(cb) = st.callbacks {
@@ -311,12 +312,16 @@ unsafe extern "system" fn hooked_present(
     {
         static FRAME_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-        // todo: fucking mutex here. fix this, onу day... maybe
+        // todo: fucking mutex here. fix this, one day... maybe
         let st = STATE.lock().unwrap();
         if let Some(cb) = st.callbacks {
-            if !(cb.game_is_paused)() && (cb.recording_is_running)() { // TODO: мне все равно надо из custom_win/runtime крейта вызывать STOP_RECORDER. Мб тогда флаги ввести: PAUSE / STOPPED, без этих лишних хуков калбеков?
+            if !(cb.game_is_paused)() && (cb.recording_is_running)() {
+                // TODO: Adapt the number of sent frames to the render frame time
+                // Otherwise, video will be too fast or too slow.
+                // For now, just use the frame skip value as a constant.
+                let frame_skip = FRAME_SKIP.get().expect("Unreachable, always inited");
                 let frame_num = FRAME_COUNTER.fetch_add(1, Ordering::Relaxed);
-                if frame_num % FRAME_SKIP == 0 {
+                if frame_num % frame_skip == 0 {
                     should_record = true;
                 }
             }
@@ -383,23 +388,46 @@ unsafe fn capture_and_send_frame(device: &IDirect3DDevice9) {
         return;
     }
 
-    let capture_width = desc.Width / CAPTURE_SCALE;
-    let capture_height = desc.Height / CAPTURE_SCALE;
+    let scale: f32 = desc.Height as f32 / *CAPTURE_RESOLUTION.get().unwrap() as f32;
+    let capture_width = (desc.Width as f32 / scale) as u32;
+    let capture_height = (desc.Height as f32 / scale) as u32;
+    let has_msaa = desc.MultiSampleType != windows::Win32::Graphics::Direct3D9::D3DMULTISAMPLE_NONE;
+
 
     // Try to get cached surfaces
     let mut cached_surfaces = {
         let st = STATE.lock().unwrap();
         st.capture_cache.as_ref().and_then(|cache|
-            Some((cache.intermediate_surface.clone(), cache.final_surface.clone()))
+            Some((
+                cache.intermediate_surface.clone(),
+                cache.final_surface.clone(),
+                cache.resolve_surface.clone()
+            ))
         )
     };
 
     // If cache is missing, create new surfaces
     if cached_surfaces.is_none() {
+        let mut resolve_surface = None;
         let mut intermediate_opt = None;
+
+        if has_msaa {
+            // Create surface for resolving MSAA
+            let mut res_opt = None;
+            if device.CreateRenderTarget(
+                desc.Width, desc.Height, desc.Format,
+                windows::Win32::Graphics::Direct3D9::D3DMULTISAMPLE_NONE, 0, false,
+                &mut res_opt, std::ptr::null_mut(),
+            ).is_err() {
+                log::warn!("Failed to create resolve surface");
+                return;
+            }
+            resolve_surface = res_opt;
+        }
+
         if device.CreateRenderTarget(
             capture_width, capture_height, desc.Format,
-            desc.MultiSampleType, desc.MultiSampleQuality, false,
+            windows::Win32::Graphics::Direct3D9::D3DMULTISAMPLE_NONE, 0, false,
             &mut intermediate_opt, std::ptr::null_mut(),
         ).is_err() {
             log::warn!("Failed to create intermediate surface");
@@ -420,24 +448,37 @@ unsafe fn capture_and_send_frame(device: &IDirect3DDevice9) {
 
         // save cache
         {
-            log::info!("create new cache!");
             let mut st = STATE.lock().unwrap();
             st.capture_cache = Some(CaptureCache {
                 intermediate_surface: intermediate_surface.clone(),
                 final_surface: final_surface.clone(),
                 width: capture_width,
                 height: capture_height,
+                resolve_surface: resolve_surface.clone(),
             });
         }
 
-        cached_surfaces = Some((intermediate_surface, final_surface));
+        cached_surfaces = Some((intermediate_surface, final_surface, resolve_surface));
     }
 
     // Now we have valid surfaces
-    let (intermediate_surface, final_surface) = cached_surfaces.unwrap();
+    let (intermediate_surface, final_surface, resolve_surface_opt) = cached_surfaces.unwrap();
 
     // Scale on GPU
-    if device.StretchRect(&back_buffer, std::ptr::null(), &intermediate_surface, std::ptr::null(), D3DTEXF_NONE).is_err() {
+    let orig_surface;
+    if let Some(resolve_surface) = resolve_surface_opt {
+        // Resolve MSAA BackBuffer -> Non-MSAA ResolveSurface
+        if device.StretchRect(&back_buffer, std::ptr::null(), &resolve_surface, std::ptr::null(), D3DTEXF_NONE).is_err() {
+            log::warn!("Cannot resolve MSAA on gpu");
+            return;
+        }
+        orig_surface = resolve_surface;
+    } else {
+        orig_surface = back_buffer;
+    }
+
+    if device.StretchRect(&orig_surface, std::ptr::null(), &intermediate_surface, std::ptr::null(), D3DTEXF_NONE).is_err() {
+        log::warn!("Cannot scale on gpu");
         return;
     }
 
@@ -476,6 +517,8 @@ unsafe fn capture_and_send_frame(device: &IDirect3DDevice9) {
                 }
             }
         }
+    } else {
+        log::warn!("Cannot copy to RAM.");
     }
 }
 
