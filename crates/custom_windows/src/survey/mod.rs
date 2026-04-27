@@ -74,10 +74,14 @@ pub fn get_request_status() -> String {
 }
 
 pub fn get_addon_dir() -> PathBuf {
+    portal2_sdk::utils::get_dll_directory().unwrap_or_default()
+}
+
+pub fn get_survey_dir() -> PathBuf {
     portal2_sdk::utils::get_dll_directory().unwrap_or_default().join("survey")
 }
-pub const SURVEY_ANSWERS_RELATIVE: &str = "survey_answers";
 
+pub const SURVEY_ANSWERS_RELATIVE: &str = "survey_answers";
 pub fn get_answer_dir() -> PathBuf {
     let engine = crate::ENGINE.get().unwrap();
     let game_dir: PathBuf = engine.engine_server().get_game_dir().into();
@@ -94,7 +98,7 @@ pub fn get_timestamp() -> u64 {
 
 pub fn init_survey() {
     // Reads 'SURVEY/config.json' and initializes the global mod-key
-    let path = get_addon_dir().join("config.json");
+    let path = get_survey_dir().join("config.json");
     let config = std::fs::read_to_string(path.clone())
         .ok()
         .and_then(|s| serde_json::from_str::<ClientConfig>(&s).ok())
@@ -116,8 +120,13 @@ pub fn init_survey() {
             .unwrap_or_else(|e| log::error!("Failed to create '{}' folder: {}", subdir, e));
     });
 
-    recorder::init_recorder_const(config.recording_frame_skip as usize, config.recording_fps, config.recording_resolution);
+    // Initialize recorder
+    let ffmpeg_path = get_addon_dir().join(recorder::FFMPEG_PATH);
+    recorder::Recorder::init(ffmpeg_path, config.recording_frame_skip as usize, config.recording_fps, config.recording_resolution);
+
+    // Initialize saver logic
     save_files::init_saver(&config);
+
     // This will only succeed on the first call.
     let _ = GLOBAL_SURVEY_CONFIG.set(config);
     set_request_status("idle");
@@ -156,7 +165,7 @@ impl WidgetForm {
         }
 
         let final_config_path_str = relative_path.to_string_lossy().into_owned();
-        let config_path = get_addon_dir().join(&final_config_path_str);
+        let config_path = get_survey_dir().join(&final_config_path_str);
 
         // Read the configuration file into a string
         let json_str = match fs::read_to_string(&config_path) {

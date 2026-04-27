@@ -112,7 +112,10 @@ pub fn start_recording(map_name: &str) {
         let video_full_path = super::get_answer_dir
             ().join("records").join(format!("recording_{}_{}.mp4", map_name, timestamp));
 
-        let _ = recorder.start_recording(&video_full_path, *recorder::RECORDING_FPS.get().unwrap());
+        let game_resolution = ENGINE.get().expect("unreachable").client().get_screen_size();
+        let rec_res = recorder::calc_aligned_resolution(game_resolution.0 as u32, game_resolution.1 as u32);
+
+        let _ = recorder.start_recording(&video_full_path, rec_res);
         VIDEO_FILE.lock().unwrap().replace(video_full_path);
     }
 }

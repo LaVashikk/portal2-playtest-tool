@@ -15,6 +15,7 @@
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
 
 use recorder::{CAPTURE_RESOLUTION, FRAME_SKIP, RECORDER, RecorderError};
 use windows::core::{HRESULT, PCSTR};
@@ -80,6 +81,7 @@ struct HookState {
 
     // recording shit
     pub capture_cache: Option<CaptureCache>,
+    pub last_capture_time: Instant,
 }
 
 pub struct CaptureCache {
@@ -106,6 +108,7 @@ static STATE: LazyLock<Mutex<HookState>> = LazyLock::new(|| {
         device_notified: false,
 
         capture_cache: None,
+        last_capture_time: Instant::now(),
     })
 });
 
@@ -310,20 +313,19 @@ unsafe extern "system" fn hooked_present(
     // Handle recording
     let mut should_record = false;
     {
-        static FRAME_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
         // todo: fucking mutex here. fix this, one day... maybe
-        let st = STATE.lock().unwrap();
+        let mut st = STATE.lock().unwrap();
         if let Some(cb) = st.callbacks {
             if !(cb.game_is_paused)() && (cb.recording_is_running)() {
-                // TODO: Adapt the number of sent frames to the render frame time
-                // Otherwise, video will be too fast or too slow.
-                // For now, just use the frame skip value as a constant.
-                let frame_skip = FRAME_SKIP.get().expect("Unreachable, always inited");
-                let frame_num = FRAME_COUNTER.fetch_add(1, Ordering::Relaxed);
-                if frame_num % frame_skip == 0 {
+                let speedup = FRAME_SKIP.get().expect("Unreachable, always inited");
+                let record_fps = *recorder::RECORDING_FPS.get().unwrap() as f32;
+                let capture_interval = std::time::Duration::from_secs_f32(*speedup as f32  / record_fps);
+
+                if st.last_capture_time.elapsed() >= capture_interval {
                     should_record = true;
+                    st.last_capture_time = std::time::Instant::now();
                 }
+
             }
         }
     }
@@ -388,28 +390,27 @@ unsafe fn capture_and_send_frame(device: &IDirect3DDevice9) {
         return;
     }
 
-    let scale: f32 = desc.Height as f32 / *CAPTURE_RESOLUTION.get().unwrap() as f32;
-    let capture_width = (desc.Width as f32 / scale) as u32;
-    let capture_height = (desc.Height as f32 / scale) as u32;
     let has_msaa = desc.MultiSampleType != windows::Win32::Graphics::Direct3D9::D3DMULTISAMPLE_NONE;
 
-
     // Try to get cached surfaces
-    let mut cached_surfaces = {
+    let mut cached_data = {
         let st = STATE.lock().unwrap();
         st.capture_cache.as_ref().and_then(|cache|
             Some((
                 cache.intermediate_surface.clone(),
                 cache.final_surface.clone(),
-                cache.resolve_surface.clone()
+                cache.resolve_surface.clone(),
+                cache.width,
+                cache.height,
             ))
         )
     };
 
     // If cache is missing, create new surfaces
-    if cached_surfaces.is_none() {
+    if cached_data.is_none() {
         let mut resolve_surface = None;
         let mut intermediate_opt = None;
+        let (capture_width, capture_height) = recorder::calc_aligned_resolution(desc.Width, desc.Height);
 
         if has_msaa {
             // Create surface for resolving MSAA
@@ -458,11 +459,11 @@ unsafe fn capture_and_send_frame(device: &IDirect3DDevice9) {
             });
         }
 
-        cached_surfaces = Some((intermediate_surface, final_surface, resolve_surface));
+        cached_data = Some((intermediate_surface, final_surface, resolve_surface, capture_width, capture_height));
     }
 
     // Now we have valid surfaces
-    let (intermediate_surface, final_surface, resolve_surface_opt) = cached_surfaces.unwrap();
+    let (intermediate_surface, final_surface, resolve_surface_opt, capture_width, capture_height) = cached_data.unwrap();
 
     // Scale on GPU
     let orig_surface;

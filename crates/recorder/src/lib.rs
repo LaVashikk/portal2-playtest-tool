@@ -14,12 +14,6 @@ pub static FRAME_SKIP: OnceLock<usize> = OnceLock::new();
 pub static RECORDING_FPS: OnceLock<i32> = OnceLock::new();
 pub static CAPTURE_RESOLUTION: OnceLock<u32> = OnceLock::new();
 
-pub fn init_recorder_const(frame_skip: usize, recording_fps: i32, recording_resolution: u32) {
-    FRAME_SKIP.set(frame_skip).unwrap();
-    RECORDING_FPS.set(recording_fps).unwrap();
-    CAPTURE_RESOLUTION.set(recording_resolution).unwrap();
-}
-
 pub enum RecorderCommand {
     Frame(Vec<u8>),
     Flush,
@@ -47,41 +41,52 @@ pub enum RecorderError {
 
 pub struct Recorder {
     is_running: bool,
-    resolution: (u32, u32), // TODO! REMOVE IT!!!!!
     writer_thread: Option<JoinHandle<Result<(), RecorderError>>>,
     frame_sender: Option<Sender<RecorderCommand>>,
     ffmpeg_path: PathBuf,
+    pub current_resolution: Option<(u32, u32)>,
     pub last_record_path: Option<PathBuf>,
 }
 
 impl Recorder {
-    pub fn new(width: u32, height: u32, ffmpeg_path: impl AsRef<Path>) -> Self {
-        Self {
-            is_running: false,
-            resolution: (width, height),
-            writer_thread: None,
-            frame_sender: None,
-            ffmpeg_path: ffmpeg_path.as_ref().to_path_buf(),
-            last_record_path: None,
-        }
+    pub fn init(ffmpeg_path: impl AsRef<Path>, frame_skip: usize, recording_fps: i32, recording_resolution: u32) {
+        FRAME_SKIP.set(frame_skip).unwrap();
+        RECORDING_FPS.set(recording_fps).unwrap();
+        CAPTURE_RESOLUTION.set(recording_resolution).unwrap();
+
+        let _ = RECORDER.set(Mutex::new(
+            Self {
+                is_running: false,
+                writer_thread: None,
+                frame_sender: None,
+                ffmpeg_path: ffmpeg_path.as_ref().to_path_buf(),
+                current_resolution: None,
+                last_record_path: None,
+            }
+        ));
     }
 
     pub fn start_recording(
         &mut self,
         output_path: impl AsRef<Path>,
-        fps: i32,
+        resolution: (u32, u32),
     ) -> Result<(), RecorderError> {
         if self.is_running {
             return Err(RecorderError::AlreadyRunning);
         }
 
-        let (w, h) = self.resolution;
+        let (w, h) = resolution;
+        let fps = *RECORDING_FPS.get().expect("Unreachable");
         let (frame_sender, frame_receiver) = channel();
         self.frame_sender = Some(frame_sender);
 
         let output_path = output_path.as_ref().to_path_buf();
+        if let Some(parent_dir) = output_path.parent() {
+            let _ = std::fs::create_dir_all(parent_dir);
+        }
         let ffmpeg_path = self.ffmpeg_path.clone();
 
+        self.current_resolution = Some((w, h));
         self.last_record_path = Some(output_path.clone());
         self.writer_thread = Some(thread::spawn(move || {
             writer_thread_main(output_path, w, h, fps, ffmpeg_path, frame_receiver)
@@ -133,6 +138,23 @@ impl Recorder {
     }
 }
 
+pub fn calc_aligned_resolution(w: u32, h: u32) -> (u32, u32) {
+    let target_height = *CAPTURE_RESOLUTION.get().unwrap_or(&0);
+    if target_height == 0 {
+        return (0, 0);
+    }
+
+    const ALIGN: u32 = 16;
+    let final_height = ((target_height as f32 / ALIGN as f32).round() as u32) * ALIGN;
+
+    let aspect_ratio = w as f32 / h as f32;
+    let raw_width = final_height as f32 * aspect_ratio;
+
+    let final_width = ((raw_width / ALIGN as f32).round() as u32) * ALIGN;
+
+    (final_width, final_height)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HwEncoder {
     NvidiaNvenc,
@@ -162,7 +184,7 @@ fn is_hw_encoder_dll_available(dll_name: &str) -> bool {
 }
 
 
-pub fn detect_best_hw_encoder() -> HwEncoder {
+fn detect_best_hw_encoder() -> HwEncoder {
     use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
 
     static BEST_ENCODER: OnceLock<HwEncoder> = OnceLock::new();
@@ -182,9 +204,11 @@ pub fn detect_best_hw_encoder() -> HwEncoder {
             }
         };
 
+        let no_hw_encoder = std::env::args().into_iter().any(|arg| arg == "no-hw-encoder");
         let mut adapter_index = 0;
 
         while let Ok(adapter) = factory.EnumAdapters1(adapter_index) {
+            if no_hw_encoder { break }
             if let Ok(desc) = adapter.GetDesc1() {
                 if (desc.Flags & 2) != 0 { // DXGI_ADAPTER_FLAG_SOFTWARE
                     adapter_index += 1;
@@ -347,8 +371,7 @@ fn writer_thread_main(
     let _ = buffered_stdin.flush();
     drop(buffered_stdin);
 
-    // who dare?
-    log::warn!("ffmpeg ded.");
+    // Wait for FFmpeg process to finish
     let status = child.wait().map_err(RecorderError::ProcessStart)?;
     log::debug!("FFmpeg process exited with status: {}", status);
 

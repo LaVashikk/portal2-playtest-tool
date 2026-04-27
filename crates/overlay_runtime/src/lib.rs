@@ -179,8 +179,6 @@ pub fn on_device_created(hwnd: HWND, device: &IDirect3DDevice9) {
             }
         };
 
-        let resolution = engine_instance.client().get_screen_size();
-
         if custom_windows::ENGINE.set(engine_instance).is_err() {
             unreachable!()
         }
@@ -188,17 +186,6 @@ pub fn on_device_created(hwnd: HWND, device: &IDirect3DDevice9) {
         if OVERLAY_RUNTIME.set(Mutex::new(UiManager::new(custom_windows::ENGINE.get().unwrap()))).is_err() {
             unreachable!()
         }
-
-        let ffmpeg_path = get_dll_directory().unwrap_or_default().join("ffmpeg.exe");
-        let scale = resolution.1 as f32 / *recorder::CAPTURE_RESOLUTION.get().unwrap() as f32;
-
-        let _ = recorder::RECORDER.set(Mutex::new(
-            Recorder::new(
-                (resolution.0 as f32 / scale) as u32,
-                (resolution.1 as f32 / scale) as u32,
-                ffmpeg_path,
-            ),
-        ));
 
         unsafe {
             O_WNDPROC = Some(std::mem::transmute(SetWindowLongPtrW(
@@ -308,6 +295,36 @@ pub fn recording_stop() {
     }
 }
 
+pub fn recording_restart() {
+    if let Some(recorder_mutex) = recorder::RECORDER.get() {
+        if let Ok(mut recorder) = recorder_mutex.lock() {
+            if !recorder.is_running() { return }
+
+            if let Err(err) = recorder.stop_recording() {
+                log::error!("Failed to stop recording: {}", err);
+            }
+
+            // todo: a shitty workaround for now
+            let engine = custom_windows::ENGINE.get().unwrap();
+            let game_resolution = engine.client().get_screen_size();
+            let rec_res = recorder::calc_aligned_resolution(game_resolution.0 as u32, game_resolution.1 as u32);
+
+            if let Some(res) = recorder.current_resolution {
+                if res == rec_res {
+                    // Skip restart if resolution not changed
+                    return;
+                }
+            }
+
+            if let Some(rec_path) = recorder.last_record_path.clone() {
+                if let Err(err) = recorder.start_recording(rec_path, rec_res) {
+                    log::error!("Failed to restart recording: {}", err);
+                }
+            }
+        }
+    }
+}
+
 pub static CALLBACKS: Callbacks = Callbacks {
     on_device_created,
     on_pre_reset,
@@ -317,7 +334,7 @@ pub static CALLBACKS: Callbacks = Callbacks {
     game_is_paused: is_paused_callback,
     recording_is_running,
     recording_stop,
-    recording_restart: recording_stop, // TODO: not really restart
+    recording_restart,
 };
 
 /// Restores original WndProc and clears overlay state.
