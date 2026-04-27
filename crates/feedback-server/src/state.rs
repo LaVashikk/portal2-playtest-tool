@@ -5,11 +5,10 @@ use indexmap::IndexMap;
 use serde::{de::DeserializeOwned, Serialize};
 use serenity::prelude::TypeMapKey;
 use tracing::{info, warn};
-use uuid::Uuid;
-use std::{fs, io, path::PathBuf, sync::Arc};
+use std::{fs, io, sync::Arc};
 use tokio::sync::broadcast;
 
-// alias for thread-safe key store
+// Alias for thread-safe key store
 pub type KeyStore = Arc<DashMap<String, ModeratorKeyData>>;
 
 // The shared application state
@@ -26,21 +25,23 @@ impl TypeMapKey for ServerState {
 
 impl ServerState {
     pub fn new() -> Self {
+        // Load keys from disk or start with an empty store
         let key_store = load_map_from_disk::<String, ModeratorKeyData>("keys.json").unwrap_or_else(|e| {
             warn!("Could not load keys.json: {}. Starting empty.", e);
             Arc::new(DashMap::new())
         });
         info!("Loaded {} keys from disk.", key_store.len());
 
+        // Create a broadcast channel for internal submission events
         let (sender, _) = broadcast::channel(100);
 
-        // Parse max storage from .env or default to 5000 MB
+        // Parse max storage from environment or default to 5000 MB
         let max_storage_mb = std::env::var("MAX_STORAGE_MB")
             .unwrap_or_else(|_| "5000".to_string())
             .parse::<u64>()
             .unwrap_or(5000);
 
-        println!("Max storage: {} MB", max_storage_mb);
+        info!("Max storage: {} MB", max_storage_mb);
         let base_dir = std::env::var("BASE_DIR").unwrap_or_else(|_| ".".to_string());
         let file_manager = Arc::new(FileManager::new(max_storage_mb, base_dir));
 
@@ -51,12 +52,12 @@ impl ServerState {
         }
     }
 
-    pub fn save_state_to_disk(&self) -> io::Result<()> { // sqlite? no, thanks! :PP
+    // Persists the current state to disk
+    pub fn save_state_to_disk(&self) -> io::Result<()> {
         save_map_to_disk("keys.json", &self.key_store)?;
         self.file_manager.save_to_disk();
         Ok(())
     }
-
 }
 
 // Generic function to load any DashMap from a JSON file
@@ -76,6 +77,7 @@ where
     Ok(Arc::new(dashmap))
 }
 
+// Generic function to save any DashMap to a JSON file
 fn save_map_to_disk<K, V>(path: &str, map: &DashMap<K, V>) -> io::Result<()>
 where
     K: Eq + std::hash::Hash + Ord + Clone + Serialize,

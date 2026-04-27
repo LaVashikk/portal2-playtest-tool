@@ -160,6 +160,7 @@ async fn handle_generate_key(ctx: &Context, command: &serenity::all::CommandInte
         guild_id: guild_id.to_string(),
         channel_id: command.channel_id.to_string(),
         server_name: guild_name.clone(),
+        is_priority: false,
     };
 
     state.key_store.insert(new_key.clone(), key_data);
@@ -214,7 +215,9 @@ async fn handle_export_data(ctx: &Context, command: &serenity::all::CommandInter
 
     let base_dir = state.file_manager.base_dir.clone();
     let export_dir = base_dir.join("EXPORTS");
-    let zip_filename = format!("{}.zip", mod_key);
+    
+    let export_id = Uuid::new_v4();
+    let zip_filename = format!("{}.zip", export_id);
     let zip_path = export_dir.join(&zip_filename);
     let answers_dir = base_dir.join("ANSWERS").join(&mod_key);
 
@@ -250,7 +253,7 @@ async fn handle_export_data(ctx: &Context, command: &serenity::all::CommandInter
         Ok(_) => {
             let base_url = std::env::var("BASE_URL").expect("Expected BASE_URL in the environment");
             // Since EXPORTS is served directly or via a special endpoint, we just construct the URL
-            let download_url = format!("{}/exports/{}", base_url, zip_filename); // We'll add this route in HTTP server
+            let download_url = format!("{}/exports/{}", base_url, zip_filename);
 
             let embed = CreateEmbed::new()
                 .title("📦 Data Export Complete")
@@ -325,7 +328,7 @@ async fn handle_stats(ctx: &Context, command: &serenity::all::CommandInteraction
     let answers_dir = state.file_manager.base_dir.join("ANSWERS").join(&mod_key);
     let mut total_surveys = 0;
 
-    // Question -> Vec<f64>
+    // Question -> Group -> Values
     let mut num_stats: HashMap< String, HashMap<String, Vec<f64>> > = HashMap::new();
     let mut unique_maps = HashSet::new();
     let mut group_totals: HashMap<String, usize> = HashMap::new();
@@ -345,7 +348,7 @@ async fn handle_stats(ctx: &Context, command: &serenity::all::CommandInteraction
                         let map_str = json["map_name"].as_str().unwrap_or("unknown").to_string();
                         let user_str = json["user_name"].as_str().unwrap_or("unknown").to_string();
 
-                        // FILTERS
+                        // Apply filters
                         if let Some(ref m) = target_map {
                             if &map_str != m { continue; }
                         }
@@ -393,7 +396,7 @@ async fn handle_stats(ctx: &Context, command: &serenity::all::CommandInteraction
     }
 
 
-    // cool decorations
+    // Build cool embed decoration
     let mut description = format!("Analyzed **{}** submissions.", total_surveys);
 
     if let Some(ref g) = group_by {
@@ -424,6 +427,7 @@ async fn handle_stats(ctx: &Context, command: &serenity::all::CommandInteraction
         for (group_name, values) in sorted_groups {
             let total_in_group = group_totals.get(group_name).unwrap_or(&0);
 
+            // Only show stats if more than 50% of the group has numerical data for this question
             if values.len() as f64 > (*total_in_group as f64 * 0.5) {
                 let sum: f64 = values.iter().sum();
                 let avg = sum / values.len() as f64;

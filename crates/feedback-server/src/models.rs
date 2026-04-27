@@ -25,9 +25,11 @@ pub struct ModeratorKeyData {
     pub guild_id: String,       // Server ID
     pub channel_id: String,     // Channel ID to send messages to
     pub server_name: String,    // For display purposes
+    #[serde(default)]
+    pub is_priority: bool,      // Whether this key has priority status for storage
 }
 
-// The event we pass internally after a submission is successful
+// The event passed internally after a submission is successfully processed
 #[derive(Debug, Clone)]
 pub struct SubmissionEvent {
     pub submission_id: uuid::Uuid,

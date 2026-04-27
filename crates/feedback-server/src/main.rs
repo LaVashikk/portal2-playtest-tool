@@ -12,9 +12,16 @@ use std::env;
 #[tokio::main]
 async fn main() {
     dotenv().ok();
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
     let app_state = ServerState::new();
 
+    // Start background tasks for file management (cleanup, expiration, storage enforcement)
     let fm_clone = app_state.file_manager.clone();
     tokio::spawn(async move {
         fm_clone.run_background_tasks().await;
@@ -24,30 +31,30 @@ async fn main() {
     let discord_token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
     let intents = GatewayIntents::non_privileged() | GatewayIntents::GUILDS | GatewayIntents::MESSAGE_CONTENT;
 
-    // We need to clone the context for the notification listener task
     let discord_state_clone = app_state.clone();
     let mut client = Client::builder(&discord_token, intents)
         .event_handler(discord_bot::BotHandler)
         .await
-        .expect("Err creating client");
+        .expect("Error creating Discord client");
 
-    { // add server state to discord client state
+    {
+        // Inject server state into the Discord client's data map
         let mut data = client.data.write().await;
         data.insert::<ServerState>(discord_state_clone);
     }
 
-    // Clone the HTTP context to pass to the listener task
+    // Start the notification listener to forward submissions to Discord
     let http_arc = client.http.clone();
     let listener_state_clone = app_state.clone();
     tokio::spawn(async move {
         discord_bot::notification_listener(listener_state_clone, http_arc).await;
     });
 
-    // Start the bot in a separate task
+    // Start the Discord bot client
     let shard_manager = client.shard_manager.clone();
     tokio::spawn(async move {
         if let Err(why) = client.start().await {
-            println!("Client error: {:?}", why);
+            tracing::error!("Discord client error: {:?}", why);
         }
     });
 
@@ -58,6 +65,7 @@ async fn main() {
 
     let app = http_server::create_router(app_state);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    println!("HTTP server listening on http://{}", addr);
+    tracing::info!("HTTP server listening on http://{}", addr);
+
     axum::serve(listener, app).await.unwrap();
 }

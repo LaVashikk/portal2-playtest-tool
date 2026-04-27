@@ -9,7 +9,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 const ONE_MB: u64 = 1024 * 1024;
-const TEMP_LIFETIME_SECS: u64 = 60 * 60; // 1 hours
+const TEMP_LIFETIME_SECS: u64 = 60 * 60; // 1 hour
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum FileStatus {
@@ -122,7 +122,7 @@ impl FileManager {
         Ok(())
     }
 
-    /// Registers a file directly into the FMS, moves it from TEMP to ANSWERS
+    /// Moves a file from TEMP_UPLOADS to its final destination in ANSWERS
     pub fn commit_temp_file(
         &self,
         temp_file_id: Uuid,
@@ -137,11 +137,10 @@ impl FileManager {
             return Err("Temp file not found or already processed".to_string());
         }
 
-        // TODO: check file size!
-
         let metadata = fs::metadata(&temp_path).map_err(|e| e.to_string())?;
         let size_bytes = metadata.len();
 
+        // Create the final directory structure: ANSWERS/{mod_key}/{user_xuid}/files/
         let final_dir = self.base_dir.join("ANSWERS").join(mod_key).join(user_xuid).join("files");
         fs::create_dir_all(&final_dir).map_err(|e| e.to_string())?;
 
@@ -167,9 +166,9 @@ impl FileManager {
         Ok(file_meta)
     }
 
-    /// The core background task loop (should be spawned via tokio)
+    /// Core background task loop for cleanup and maintenance
     pub async fn run_background_tasks(self: Arc<Self>) {
-        let mut interval = tokio::time::interval(Duration::from_secs(3 * 60 * 60)); // Every 3 hours
+        let mut interval = tokio::time::interval(Duration::from_secs(3 * 60 * 60)); // Run every 3 hours
         loop {
             interval.tick().await;
             info!("Running FMS background tasks...");
@@ -180,7 +179,7 @@ impl FileManager {
         }
     }
 
-    /// Deletes abandoned files in TEMP_UPLOADS
+    /// Deletes abandoned files in TEMP_UPLOADS that are older than TEMP_LIFETIME_SECS
     fn cleanup_orphans(&self) {
         let temp_dir = self.base_dir.join("TEMP_UPLOADS");
         let now = SystemTime::now();
@@ -200,7 +199,7 @@ impl FileManager {
         }
     }
 
-    /// Checks individual file expiration dates
+    /// Scans for files that have passed their expiration date and marks them as expired
     fn expire_old_files(&self) {
         let now = Self::current_timestamp();
         let mut to_expire = Vec::new();
@@ -221,19 +220,20 @@ impl FileManager {
         }
     }
 
+    /// Physically deletes an expired file and updates its metadata status
     fn mark_as_expired(&self, id: &Uuid) {
         if let Some(mut meta) = self.files.get_mut(id) {
-            let _ = fs::remove_file(&meta.path); // Delete physically
+            let _ = fs::remove_file(&meta.path);
             meta.status = FileStatus::Expired { deleted_at: Self::current_timestamp() };
         }
     }
 
-    /// Smart Deletion Algorithm: Targets the heaviest mod_key first
+    /// Smart Deletion Algorithm: Targets the heaviest mod_key users first when storage limits are exceeded
     fn enforce_storage_limit(&self) {
         let mut total_active_bytes: u64 = 0;
         let mut usage_per_key: HashMap<String, u64> = HashMap::new();
 
-        // 1. Calculate current usage
+        // 1. Calculate current total and per-key usage
         for entry in self.files.iter() {
             let meta = entry.value();
             if let FileStatus::Active = meta.status {
@@ -243,7 +243,7 @@ impl FileManager {
         }
 
         if total_active_bytes <= self.max_storage_bytes {
-            return; // Under limit, all good
+            return; // Under limit, no action needed
         }
 
         warn!("Storage limit exceeded ({} / {} bytes). Running Smart Deletion...", total_active_bytes, self.max_storage_bytes);
@@ -261,7 +261,7 @@ impl FileManager {
                 None => break, // No more files to process
             };
 
-            // Find their oldest, non-priority active file
+            // Find the oldest, non-priority active file for that user
             let mut oldest_file_id = None;
             let mut oldest_time = u64::MAX;
 
@@ -278,7 +278,7 @@ impl FileManager {
             }
 
             if let Some(id) = oldest_file_id {
-                // We found a file to delete
+                // Remove the oldest file found
                 let size_freed = self.files.get(&id).unwrap().size_bytes;
                 self.mark_as_expired(&id);
 
@@ -288,7 +288,7 @@ impl FileManager {
                 }
                 info!("Smart Deletion: Removed file {} from {} (freed {} bytes)", id, target_mod_key, size_freed);
             } else {
-                // The biggest offender only has priority files. Remove them from our target list.
+                // If the biggest offender only has priority files, stop targeting them
                 usage_per_key.remove(&target_mod_key);
                 if usage_per_key.is_empty() {
                     error!("CRITICAL: Cannot free enough space! All remaining files are priority.");

@@ -14,7 +14,7 @@ use tower_http::services::ServeFile;
 use tower::ServiceExt;
 use uuid::Uuid;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path as StdPath, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 
@@ -25,6 +25,7 @@ pub fn create_router(state: ServerState) -> Router {
         .route("/data/:id", get(serve_data))
         .route("/exports/:filename", get(serve_export))
         .route("/healthy", get(health_check))
+        // Set maximum body limit to 120MB for file uploads
         .layer(DefaultBodyLimit::max(120 * 1024 * 1024))
         .with_state(state)
 }
@@ -34,7 +35,7 @@ async fn handle_submission(
     headers: HeaderMap,
     Json(payload): Json<FormSubmission>,
 ) -> StatusCode {
-    // Validate the moderator key
+    // Validate the moderator key from headers
     let key = match headers.get("X-Moderator-Key").and_then(|h| h.to_str().ok()) {
         Some(k) => k,
         None => return StatusCode::UNAUTHORIZED,
@@ -45,15 +46,23 @@ async fn handle_submission(
         None => return StatusCode::FORBIDDEN,
     };
 
-    // Persist the data
+    let is_priority = destination.is_priority;
+
+    // Sanitize user_xuid to prevent path traversal attacks
+    let safe_user_xuid = StdPath::new(&payload.user_xuid)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown_user");
+
+    // Generate a safe filename for the submission JSON
     let filename = format!(
         "{}_{}.json",
         PathBuf::from(&payload.survey_id).file_stem().and_then(|s| s.to_str()).unwrap_or("form"),
         payload.submission_timestamp
     );
 
-    // junky shit
-    let answer_dir = state.file_manager.base_dir.join("ANSWERS").join(key).join(&payload.user_xuid);
+    // Ensure the destination directory exists
+    let answer_dir = state.file_manager.base_dir.join("ANSWERS").join(key).join(safe_user_xuid);
     if let Err(e) = fs::create_dir_all(&answer_dir) {
         error!("Failed to create directory {:?}: {}", answer_dir, e);
         return StatusCode::INTERNAL_SERVER_ERROR;
@@ -73,11 +82,11 @@ async fn handle_submission(
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
 
-    // Register the JSON itself in the File Manager
+    // Register the submission JSON in the file manager
     let submission_id = Uuid::new_v4();
     state.file_manager.commit_file(submission_id, key, &filename, true, file_path, json_bytes.len() as u64);
 
-    // Process attached files
+    // Process and commit attached files from temporary storage
     let mut attached_files = Vec::new();
     for (file_id_str, _) in &payload.files {
         if let Ok(file_uuid) = Uuid::parse_str(file_id_str) {
@@ -86,10 +95,8 @@ async fn handle_submission(
                 .map(|r| r.value().clone())
                 .unwrap_or_else(|| "unknown.bin".to_string());
 
-            // TODO: Implement priority logic later
-            let is_priority = key == "xxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
-
-            match state.file_manager.commit_temp_file(file_uuid, key, &payload.user_xuid, &original_name, is_priority) {
+            // Move the file from TEMP_UPLOADS to the final destination
+            match state.file_manager.commit_temp_file(file_uuid, key, safe_user_xuid, &original_name, is_priority) {
                 Ok(meta) => attached_files.push(meta),
                 Err(e) => warn!("Failed to commit file {}: {}", file_uuid, e),
             }
@@ -98,7 +105,7 @@ async fn handle_submission(
 
     state.file_manager.save_to_disk();
 
-    // Fire the event
+    // Trigger internal submission event
     let event = SubmissionEvent {
         submission_id,
         destination,
@@ -108,72 +115,10 @@ async fn handle_submission(
         attached_files,
     };
 
-    // If no one is listening, it's not an error.
     let _ = state.submission_sender.send(event);
 
     StatusCode::OK
 }
-
-// async fn upload_file(
-//     State(state): State<ServerState>,
-//     headers: HeaderMap,
-//     // Принимаем Body (поток), а не Bytes (буфер в памяти)
-//     body: Body,
-// ) -> Result<Json<serde_json::Value>, StatusCode> {
-//     let key = headers.get("X-Moderator-Key")
-//         .and_then(|h| h.to_str().ok())
-//         .ok_or(StatusCode::UNAUTHORIZED)?;
-
-//     if !state.key_store.contains_key(key) {
-//         return Err(StatusCode::FORBIDDEN);
-//     }
-
-//     let original_name = headers.get("X-File-Name")
-//         .and_then(|h| h.to_str().ok())
-//         .unwrap_or("unknown.bin")
-//         .to_string();
-
-//     let temp_id = Uuid::new_v4();
-//     let temp_path = state.file_manager.base_dir.join("TEMP_UPLOADS").join(temp_id.to_string());
-
-//     // 1. Асинхронно создаем файл на диске
-//     let mut file = match File::create(&temp_path).await {
-//         Ok(f) => f,
-//         Err(e) => {
-//             error!("Failed to create temp file {:?}: {}", temp_path, e);
-//             return Err(StatusCode::INTERNAL_SERVER_ERROR);
-//         }
-//     };
-
-//     // 2. Превращаем тело запроса в поток кусков (чанков) данных
-//     let mut data_stream = body.into_data_stream();
-
-//     // 3. Читаем данные кусками по мере их поступления из сети
-//     while let Some(chunk_result) = data_stream.next().await {
-//         let chunk = match chunk_result {
-//             Ok(c) => c,
-//             Err(e) => {
-//                 error!("Error reading network stream: {}", e);
-//                 // Если клиент отвалился во время загрузки (например, пропал интернет),
-//                 // удаляем битый/недокачанный файл, чтобы не мусорить на диске.
-//                 let _ = tokio::fs::remove_file(&temp_path).await;
-//                 return Err(StatusCode::BAD_REQUEST);
-//             }
-//         };
-
-//         // 4. Асинхронно дописываем полученный кусок в файл
-//         if let Err(e) = file.write_all(&chunk).await {
-//             error!("Error writing chunk to disk: {}", e);
-//             let _ = tokio::fs::remove_file(&temp_path).await;
-//             return Err(StatusCode::INTERNAL_SERVER_ERROR);
-//         }
-//     }
-
-//     // save temp_id -> original_name mapping (делаем это в конце, когда файл точно успешно загружен)
-//     state.file_manager.temp_file_names.insert(temp_id, original_name);
-
-//     Ok(Json(serde_json::json!({ "file_id": temp_id.to_string() })))
-// }
 
 async fn upload_file(
     State(state): State<ServerState>,
@@ -186,17 +131,21 @@ async fn upload_file(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    // TODO: check body size!!!!!
-
-    let original_name = headers.get("X-File-Name")
+    // Extract and sanitize the original filename from headers to prevent path traversal
+    let raw_name = headers.get("X-File-Name")
         .and_then(|h| h.to_str().ok())
+        .unwrap_or("unknown.bin");
+
+    let original_name = StdPath::new(raw_name)
+        .file_name()
+        .and_then(|s| s.to_str())
         .unwrap_or("unknown.bin")
         .to_string();
 
-
     let temp_id = Uuid::new_v4();
     let temp_path = state.file_manager.base_dir.join("TEMP_UPLOADS").join(temp_id.to_string());
-    // save temp_id -> original_name mapping
+
+    // Store temp_id -> original_name mapping for later use during submission
     state.file_manager.temp_file_names.insert(temp_id, original_name.clone());
 
     if let Err(e) = fs::write(&temp_path, body) {
@@ -240,7 +189,16 @@ async fn serve_export(
     request: Request<axum::body::Body>,
 ) -> Response {
     let export_dir = state.file_manager.base_dir.join("EXPORTS");
-    let file_path = export_dir.join(&filename);
+
+    // Sanitize export filename to prevent path traversal
+    let safe_filename = StdPath::new(&filename)
+        .file_name()
+        .and_then(|s| s.to_str());
+
+    let file_path = match safe_filename {
+        Some(name) => export_dir.join(name),
+        None => return (StatusCode::BAD_REQUEST, "Invalid filename.").into_response(),
+    };
 
     if !file_path.exists() {
         return (StatusCode::NOT_FOUND, "Archive not found.").into_response();
@@ -252,7 +210,6 @@ async fn serve_export(
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to serve archive: {}", err)).into_response(),
     }
 }
-
 
 async fn health_check(State(state): State<ServerState>) -> StatusCode {
     let mut total_active_bytes: u64 = 0;
