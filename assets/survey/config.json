@@ -4,10 +4,10 @@
   "bug_report_config": "bug_report.json",
   "bug_report_icon": "❗",
 
-  "save_console_logs": true,
+  "save_console_logs": false,
   "save_demos": false,
 
-  "save_recordings": true,
+  "save_recordings": false,
   "recording_fps": 10,
   "recording_frame_skip": 10,
   "recording_resolution": 720

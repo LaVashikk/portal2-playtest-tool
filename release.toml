@@ -2,10 +2,6 @@
 
 release_notes_header = """
 The **Playtest Assistant** is a powerful in-game toolset for **Portal 2**, designed to streamline the collection of structured feedback and bug reports. It directly connects your playtesters to your development team via an integrated Discord bot, providing real-time, actionable data to improve your project.
-
-> ⚠️ **Work in Progress**  
-> This is a release candidate and the project is still under active development.  
-> If you encounter any bugs, issues, or have feature suggestions, please open an issue on the GitHub repository.
 """
 
 [[targets]]
