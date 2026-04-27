@@ -50,8 +50,7 @@ pub trait Window {
 ///
 /// This function is the designated discovery point for UI components. The core
 /// application calls it to populate the `UiManager`'s window list.
-pub fn regist_windows(engine: &Engine) -> Vec<Box<dyn Window + Send>> {
-    // regist_events(engine); // todo: remove this
+pub fn regist_windows(_engine: &Engine) -> Vec<Box<dyn Window + Send>> {
     survey::init_survey();
     log::info!("UI components initialized.");
 
@@ -64,27 +63,6 @@ pub fn regist_windows(engine: &Engine) -> Vec<Box<dyn Window + Send>> {
         Box::new(survey::SurveyWin::new()),
         Box::new(survey::BugReportWin::new(&bug_report_config)),
     ]
-}
-
-fn regist_events(engine: &Engine) {
-    // https://developer.valvesoftware.com/wiki/Logic_eventlistener
-
-    engine.game_event_manager().listen("player_say", |event| { // todo: change logic here
-        let command = event.get_string("text", "").to_lowercase();
-        match command.as_str() {
-            // "!survey" => survey::open_survey(),
-            // "!bug" => survey::open_bug_report(),
-            "!record" => {recorder::RECORDER.get().unwrap().lock().unwrap().start_recording("test_recording.mp4", *recorder::RECORDING_FPS.get().unwrap());}, // TODO!
-            "!stop" => {recorder::RECORDER.get().unwrap().lock().unwrap().stop_recording();}
-            "!debug" => {
-                // TODO: DEV-CODE. debug _FILES data:
-                log::warn!("VIDEO_FILE: {:?}", survey::VIDEO_FILE.lock().unwrap());
-                log::warn!("LOG_FILE: {:?}", survey::LOGS_FILE.lock().unwrap());
-                log::warn!("DEMOS_FILE: {:?}", survey::DEMO_FILES.lock().unwrap());
-            }
-            _ => {}
-        }
-    });
 }
 
 
