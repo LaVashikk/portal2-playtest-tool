@@ -40,6 +40,7 @@ impl ServerState {
             .parse::<u64>()
             .unwrap_or(5000);
 
+        println!("Max storage: {} MB", max_storage_mb);
         let base_dir = std::env::var("BASE_DIR").unwrap_or_else(|_| ".".to_string());
         let file_manager = Arc::new(FileManager::new(max_storage_mb, base_dir));
 

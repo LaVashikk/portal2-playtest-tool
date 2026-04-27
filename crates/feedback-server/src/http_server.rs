@@ -23,6 +23,8 @@ pub fn create_router(state: ServerState) -> Router {
         .route("/submit", post(handle_submission))
         .route("/upload", post(upload_file))
         .route("/data/:id", get(serve_data))
+        .route("/exports/:filename", get(serve_export))
+        .route("/healthy", get(health_check))
         .layer(DefaultBodyLimit::max(120 * 1024 * 1024))
         .with_state(state)
 }
@@ -112,6 +114,67 @@ async fn handle_submission(
     StatusCode::OK
 }
 
+// async fn upload_file(
+//     State(state): State<ServerState>,
+//     headers: HeaderMap,
+//     // Принимаем Body (поток), а не Bytes (буфер в памяти)
+//     body: Body,
+// ) -> Result<Json<serde_json::Value>, StatusCode> {
+//     let key = headers.get("X-Moderator-Key")
+//         .and_then(|h| h.to_str().ok())
+//         .ok_or(StatusCode::UNAUTHORIZED)?;
+
+//     if !state.key_store.contains_key(key) {
+//         return Err(StatusCode::FORBIDDEN);
+//     }
+
+//     let original_name = headers.get("X-File-Name")
+//         .and_then(|h| h.to_str().ok())
+//         .unwrap_or("unknown.bin")
+//         .to_string();
+
+//     let temp_id = Uuid::new_v4();
+//     let temp_path = state.file_manager.base_dir.join("TEMP_UPLOADS").join(temp_id.to_string());
+
+//     // 1. Асинхронно создаем файл на диске
+//     let mut file = match File::create(&temp_path).await {
+//         Ok(f) => f,
+//         Err(e) => {
+//             error!("Failed to create temp file {:?}: {}", temp_path, e);
+//             return Err(StatusCode::INTERNAL_SERVER_ERROR);
+//         }
+//     };
+
+//     // 2. Превращаем тело запроса в поток кусков (чанков) данных
+//     let mut data_stream = body.into_data_stream();
+
+//     // 3. Читаем данные кусками по мере их поступления из сети
+//     while let Some(chunk_result) = data_stream.next().await {
+//         let chunk = match chunk_result {
+//             Ok(c) => c,
+//             Err(e) => {
+//                 error!("Error reading network stream: {}", e);
+//                 // Если клиент отвалился во время загрузки (например, пропал интернет),
+//                 // удаляем битый/недокачанный файл, чтобы не мусорить на диске.
+//                 let _ = tokio::fs::remove_file(&temp_path).await;
+//                 return Err(StatusCode::BAD_REQUEST);
+//             }
+//         };
+
+//         // 4. Асинхронно дописываем полученный кусок в файл
+//         if let Err(e) = file.write_all(&chunk).await {
+//             error!("Error writing chunk to disk: {}", e);
+//             let _ = tokio::fs::remove_file(&temp_path).await;
+//             return Err(StatusCode::INTERNAL_SERVER_ERROR);
+//         }
+//     }
+
+//     // save temp_id -> original_name mapping (делаем это в конце, когда файл точно успешно загружен)
+//     state.file_manager.temp_file_names.insert(temp_id, original_name);
+
+//     Ok(Json(serde_json::json!({ "file_id": temp_id.to_string() })))
+// }
+
 async fn upload_file(
     State(state): State<ServerState>,
     headers: HeaderMap,
@@ -176,7 +239,18 @@ async fn serve_export(
     Path(filename): Path<String>,
     request: Request<axum::body::Body>,
 ) -> Response {
-    (StatusCode::NOT_IMPLEMENTED, "TODO.").into_response()
+    let export_dir = state.file_manager.base_dir.join("EXPORTS");
+    let file_path = export_dir.join(&filename);
+
+    if !file_path.exists() {
+        return (StatusCode::NOT_FOUND, "Archive not found.").into_response();
+    }
+
+    let service = ServeFile::new(&file_path);
+    match service.oneshot(request).await {
+        Ok(response) => response.into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to serve archive: {}", err)).into_response(),
+    }
 }
 
 

@@ -1,6 +1,6 @@
 use crate::models::{ModeratorKeyData, SubmissionEvent};
 use crate::state::ServerState;
-use serenity::all::{Command, CommandDataOptionValue, CommandOptionType, CreateCommand, CreateCommandOption, CreateMessage, Interaction, Permissions, ResolvedOption, ResolvedValue};
+use serenity::all::{Colour, Command, CommandDataOptionValue, CommandOptionType, CreateCommand, CreateCommandOption, CreateMessage, Interaction, Permissions, ResolvedOption, ResolvedValue};
 use serenity::async_trait;
 use serenity::builder::{CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage};
 use serenity::http::Http;
@@ -9,7 +9,7 @@ use serenity::prelude::*;
 use zip::write::FileOptions;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -46,15 +46,30 @@ impl EventHandler for BotHandler {
         let commands = vec![
             CreateCommand::new("generate_key")
                 .description("Generates a new moderator key for this server and channel."),
-            // CreateCommand::new("export_data")
-            //     .description("Exports all survey data and files for this channel into a ZIP archive."),
-            // CreateCommand::new("stats")
-            //     .description("Analyzes numerical answers for a specific survey.")
-            //     .add_option(CreateCommandOption::new(
-            //         CommandOptionType::String,
-            //         "survey_id",
-            //         "The survey ID to analyze (default: survey/default.json)"
-            //     ).required(false)),
+            CreateCommand::new("export_data")
+                .description("Exports all survey data and files for this channel into a ZIP archive."),
+            CreateCommand::new("stats")
+                .description("Analyzes numerical answers for a specific survey.")
+                .add_option(CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "survey_id",
+                    "The survey ID to analyze (default: default.json)"
+                ).required(false))
+                .add_option(CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "group_by",
+                    "Group the statistics by a specific field"
+                ).add_string_choice("Map", "map").add_string_choice("User", "user").required(false))
+                .add_option(CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "map_name",
+                    "Filter stats by a specific map (e.g., maps/pcap_a1_04.bsp)"
+                ).required(false))
+                .add_option(CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "user_xuid",
+                    "Filter stats by a specific user's XUID"
+                ).required(false)),
         ];
 
         if let Err(e) = Command::set_global_commands(&ctx.http, commands).await {
@@ -171,12 +186,280 @@ async fn handle_generate_key(ctx: &Context, command: &serenity::all::CommandInte
 }
 
 async fn handle_export_data(ctx: &Context, command: &serenity::all::CommandInteraction) -> Result<(), serenity::Error> {
-    // TODO
-    todo!()
+    // We acknowledge the command immediately because zipping takes time
+    let defer_builder = CreateInteractionResponse::Defer(CreateInteractionResponseMessage::new().ephemeral(false));
+    command.create_response(&ctx.http, defer_builder).await?;
+
+    let state = {
+        let data = ctx.data.read().await;
+        data.get::<ServerState>().cloned().expect("ServerState not found in TypeMap")
+    };
+
+    // Find the mod_key associated with this channel
+    let mut target_key = None;
+    for entry in state.key_store.iter() {
+        if entry.value().channel_id == command.channel_id.to_string() {
+            target_key = Some(entry.key().clone());
+            break;
+        }
+    }
+
+    let mod_key = match target_key {
+        Some(k) => k,
+        None => {
+            command.edit_response(&ctx.http, serenity::builder::EditInteractionResponse::new().content("❌ No moderator key is bound to this channel.")).await?;
+            return Ok(());
+        }
+    };
+
+    let base_dir = state.file_manager.base_dir.clone();
+    let export_dir = base_dir.join("EXPORTS");
+    let zip_filename = format!("{}.zip", mod_key);
+    let zip_path = export_dir.join(&zip_filename);
+    let answers_dir = base_dir.join("ANSWERS").join(&mod_key);
+
+    if !answers_dir.exists() {
+        command.edit_response(&ctx.http, serenity::builder::EditInteractionResponse::new().content("❌ No data has been collected for this key yet.")).await?;
+        return Ok(());
+    }
+
+    // Move heavy zip operation to a blocking thread to avoid freezing the async runtime
+    let zip_result = tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let file = std::fs::File::create(&zip_path).map_err(|e| e.to_string())?;
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+
+        let walker = walkdir::WalkDir::new(&answers_dir);
+        for entry in walker.into_iter().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let name = path.strip_prefix(&answers_dir).unwrap().to_str().unwrap();
+
+            if path.is_file() {
+                zip.start_file(name, options).map_err(|e| e.to_string())?;
+                let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+                std::io::copy(&mut f, &mut zip).map_err(|e| e.to_string())?;
+            } else if !name.is_empty() {
+                zip.add_directory(name, options).map_err(|e| e.to_string())?;
+            }
+        }
+        zip.finish().map_err(|e| e.to_string())?;
+        Ok(())
+    }).await.unwrap_or_else(|e| Err(format!("Task panicked: {}", e)));
+
+    match zip_result {
+        Ok(_) => {
+            let base_url = std::env::var("BASE_URL").expect("Expected BASE_URL in the environment");
+            // Since EXPORTS is served directly or via a special endpoint, we just construct the URL
+            let download_url = format!("{}/exports/{}", base_url, zip_filename); // We'll add this route in HTTP server
+
+            let embed = CreateEmbed::new()
+                .title("📦 Data Export Complete")
+                .color(0x00FF00)
+                .description("Your data has been successfully packaged.")
+                .field("Download Link", format!("[Click here to download ZIP]({})", download_url), false)
+                .footer(serenity::builder::CreateEmbedFooter::new("This link will expire in 14 days."));
+
+            command.edit_response(&ctx.http, serenity::builder::EditInteractionResponse::new().add_embed(embed)).await?;
+        }
+        Err(e) => {
+            command.edit_response(&ctx.http, serenity::builder::EditInteractionResponse::new().content(format!("❌ Failed to create zip: {}", e))).await?;
+        }
+    }
+    Ok(())
 }
 
 async fn handle_stats(ctx: &Context, command: &serenity::all::CommandInteraction) -> Result<(), serenity::Error> {
-    todo!()
+    let state = {
+        let data = ctx.data.read().await;
+        data.get::<ServerState>().cloned().expect("ServerState not found in TypeMap")
+    };
+
+    let mut survey_id = "default.json".to_string();
+    let mut target_map = None;
+    let mut target_user = None;
+    let mut group_by = None;
+
+    for opt in &command.data.options {
+        match opt.name.as_str() {
+            "survey_id" => {
+                if let serenity::all::CommandDataOptionValue::String(s) = &opt.value {
+                    survey_id = s.to_string();
+                }
+            }
+            "map_name" => {
+                if let serenity::all::CommandDataOptionValue::String(s) = &opt.value {
+                    target_map = Some(s.to_string());
+                }
+            }
+            "user_xuid" => {
+                if let serenity::all::CommandDataOptionValue::String(s) = &opt.value {
+                    target_user = Some(s.to_string());
+                }
+            }
+            "group_by" => {
+                if let serenity::all::CommandDataOptionValue::String(s) = &opt.value {
+                    group_by = Some(s.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut target_key = None;
+    for entry in state.key_store.iter() {
+        if entry.value().channel_id == command.channel_id.to_string() {
+            target_key = Some(entry.key().clone());
+            break;
+        }
+    }
+
+    let mod_key = match target_key {
+        Some(k) => k,
+        None => {
+            let builder = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("❌ No moderator key is bound to this channel.").ephemeral(true));
+            command.create_response(&ctx.http, builder).await?;
+            return Ok(());
+        }
+    };
+
+    let answers_dir = state.file_manager.base_dir.join("ANSWERS").join(&mod_key);
+    let mut total_surveys = 0;
+
+    // Question -> Vec<f64>
+    let mut num_stats: HashMap< String, HashMap<String, Vec<f64>> > = HashMap::new();
+    let mut unique_maps = HashSet::new();
+    let mut group_totals: HashMap<String, usize> = HashMap::new();
+
+    // yeah, call me "the bullshit"
+    if answers_dir.exists() {
+        let walker = walkdir::WalkDir::new(&answers_dir);
+        for entry in walker.into_iter().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if json["survey_id"].as_str() != Some(&survey_id) {
+                            continue;
+                        }
+
+                        let map_str = json["map_name"].as_str().unwrap_or("unknown").to_string();
+                        let user_str = json["user_name"].as_str().unwrap_or("unknown").to_string();
+
+                        // FILTERS
+                        if let Some(ref m) = target_map {
+                            if &map_str != m { continue; }
+                        }
+                        if let Some(ref u) = target_user {
+                            if &user_str != u { continue; }
+                        }
+
+                        total_surveys += 1;
+                        unique_maps.insert(map_str.clone());
+
+                        // collect stats by group key
+                        let group_key = match group_by.as_deref() {
+                            Some("map") => map_str,
+                            Some("user") => user_str,
+                            _ => "Overall".to_string(),
+                        };
+
+                        *group_totals.entry(group_key.clone()).or_insert(0) += 1;
+
+                        if let Some(answers) = json["answers"].as_object() {
+                            for (q, a) in answers {
+                                if let Some(val_str) = a.as_str() {
+                                    if let Ok(num) = val_str.parse::<f64>() {
+                                        num_stats.entry(q.clone())
+                                            .or_default()
+                                            .entry(group_key.clone())
+                                            .or_default()
+                                            .push(num);                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if total_surveys == 0 {
+        let builder = CreateInteractionResponse::Message(
+            CreateInteractionResponseMessage::new().content(format!("No data found for `{}`.", survey_id))
+            .ephemeral(true)
+        );
+        command.create_response(&ctx.http, builder).await?;
+        return Ok(());
+    }
+
+
+    // cool decorations
+    let mut description = format!("Analyzed **{}** submissions.", total_surveys);
+
+    if let Some(ref g) = group_by {
+        description.push_str(&format!("\n**Grouped By:** `{}`", g.to_uppercase()));
+    }
+    if let Some(ref m) = target_map {
+        description.push_str(&format!("\n**Filtered by Map:** `{}`", m));
+    }
+    if let Some(ref u) = target_user {
+        description.push_str(&format!("\n**Filtered by User:** `{}`", u));
+    }
+
+    let mut embed = CreateEmbed::new()
+        .title(format!("📊 Statistics: {}", survey_id.split('/').last().unwrap_or(&survey_id)))
+        .color(Colour::DARK_TEAL)
+        .description(description);
+
+    let mut added_fields = 0;
+    for (q, groups) in &num_stats {
+        let mut field_text = String::new();
+
+        // todo: how to sort the order of groups?
+        let mut sorted_groups: Vec<_> = groups.iter().collect();
+        sorted_groups.sort_by(|a, b| a.0.cmp(b.0));
+
+        let mut lines_added = 0;
+
+        for (group_name, values) in sorted_groups {
+            let total_in_group = group_totals.get(group_name).unwrap_or(&0);
+
+            if values.len() as f64 > (*total_in_group as f64 * 0.5) {
+                let sum: f64 = values.iter().sum();
+                let avg = sum / values.len() as f64;
+                let min = values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+                let max = values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+
+                let line = if group_name == "Overall" {
+                    format!("**Avg:** {:.2} | Min: {} | Max: {}\n", avg, min, max)
+                } else {
+                    format!("🔹 `{}`: **{:.2}** ({} - {})\n", group_name, avg, min, max)
+                };
+
+                if field_text.len() + line.len() > 1000 {
+                    field_text.push_str("...and more\n");
+                    lines_added += 1;
+                    break;
+                }
+
+                field_text.push_str(&line);
+                lines_added += 1;
+            }
+        }
+
+        if lines_added > 0 {
+            embed = embed.field(q, field_text, false);
+            added_fields += 1;
+        }
+    }
+
+    if added_fields == 0 {
+        embed = embed.field("Notice", "No numerical answers found to analyze. All answers seem to be text.", false);
+    }
+
+    let builder = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().add_embed(embed));
+    command.create_response(&ctx.http, builder).await?;
+    Ok(())
 }
 
 pub async fn notification_listener(state: ServerState, http: Arc<Http>) {
