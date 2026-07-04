@@ -320,8 +320,6 @@ fn writer_thread_main(
         output_path.as_ref().to_str().unwrap(),
     ]);
 
-    dbg!(&args);
-
     let mut child = Command::new(ffmpeg_path.as_ref())
         .args(&args)
         .stdin(Stdio::piped())
