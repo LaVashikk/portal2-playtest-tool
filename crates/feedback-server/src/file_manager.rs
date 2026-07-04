@@ -84,9 +84,9 @@ impl FileManager {
     }
 
     // Dynamic lifetime calculation based on file size
-    fn calculate_expiration(size_bytes: u64) -> Option<u64> {
+    fn calculate_expiration(is_priority: bool, size_bytes: u64) -> Option<u64> {
         let now = Self::current_timestamp();
-        if size_bytes < ONE_MB {
+        if size_bytes < ONE_MB || is_priority {
             None // < 1MB: Keep forever (until global limit hit)
         } else if size_bytes <= 10 * ONE_MB {
             Some(now + 30 * 24 * 60 * 60) // 1-10MB: 30 days
@@ -111,7 +111,7 @@ impl FileManager {
             size_bytes,
             path,
             uploaded_at: Self::current_timestamp(),
-            expires_at: Self::calculate_expiration(size_bytes),
+            expires_at: Self::calculate_expiration(is_priority, size_bytes),
             is_priority,
             status: FileStatus::Active,
         };
@@ -155,7 +155,7 @@ impl FileManager {
             size_bytes,
             path: final_path,
             uploaded_at: Self::current_timestamp(),
-            expires_at: Self::calculate_expiration(size_bytes),
+            expires_at: Self::calculate_expiration(is_priority, size_bytes),
             is_priority,
             status: FileStatus::Active,
         };
