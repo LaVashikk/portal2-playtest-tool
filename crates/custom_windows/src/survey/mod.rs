@@ -309,9 +309,13 @@ impl WidgetForm {
             let mut files = Vec::with_capacity(3);
             if !config.mod_key.is_empty() {
                 if config.save_console_logs && survey_with_logs {
+                    let file_to_process = {
+                        let mut guard = save_files::LOGS_FILE.lock().unwrap();
+                        guard.take()
+                    };
                     let handle = thread::spawn(|| {
-                        if let Some(log_file) = save_files::LOGS_FILE.lock().unwrap().as_ref() {
-                            return Self::send_file(&config.mod_key, log_file)
+                        if let Some(log_file) = file_to_process {
+                            return Self::send_file(&config.mod_key, &log_file)
                         }
                         bail!("Does not have logs!")
                     });
@@ -320,6 +324,10 @@ impl WidgetForm {
 
                 if config.save_demos && survey_with_demo {
                     save_files::stop_demo_recording();
+                    // let files_to_process = {
+                    //     let guard = save_files::LOGS_FILE.lock().unwrap();
+                    //     guard.clone()
+                    // };
                     let handle = thread::spawn(move || {
                         if let Ok(zip_file) = save_files::pack_demos() {
                             return Self::send_file(&config.mod_key, &zip_file)
@@ -331,9 +339,13 @@ impl WidgetForm {
 
                 if config.save_recordings && survey_with_recording {
                     save_files::stop_recording();
+                    let file_to_process = {
+                        let mut guard = save_files::VIDEO_FILE.lock().unwrap();
+                        guard.take()
+                    };
 
                     let handle = thread::spawn(|| {
-                        if let Some(video_file) = save_files::VIDEO_FILE.lock().unwrap().take() {
+                        if let Some(video_file) = file_to_process {
                             return Self::send_file(&config.mod_key, &video_file)
                         }
                         bail!("Does not have video!")

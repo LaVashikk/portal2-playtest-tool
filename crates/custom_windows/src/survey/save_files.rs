@@ -87,7 +87,12 @@ pub fn pack_demos() -> Result<PathBuf> {
     let mut zip = ZipWriter::new(file);
     let options = SimpleFileOptions::default();
 
-    for file_path in DEMO_FILES.lock().unwrap().iter() {
+    let files_to_process = {
+        let guard = DEMO_FILES.lock().unwrap();
+        guard.clone()
+    };
+
+    for file_path in files_to_process.iter() {
         let file = File::open(file_path)?;
         let file_name = file_path.file_name().unwrap().to_str().unwrap();
         zip.start_file(file_name, options)?;
