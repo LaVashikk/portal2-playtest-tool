@@ -2,6 +2,7 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::os::windows::process::CommandExt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{self, JoinHandle};
@@ -183,12 +184,18 @@ fn is_hw_encoder_dll_available(dll_name: &str) -> bool {
     }
 }
 
+pub static FFMPEG_SOMETHING_IS_WRONG: AtomicBool = AtomicBool::new(false);
 
 fn detect_best_hw_encoder() -> HwEncoder {
     use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
 
     static BEST_ENCODER: OnceLock<HwEncoder> = OnceLock::new();
     if let Some(encoder) = BEST_ENCODER.get() {
+        // FALLBACK 2: if we have hardware encoder, but it doesn't work - using software
+        if FFMPEG_SOMETHING_IS_WRONG.load(Ordering::Relaxed) {
+            return HwEncoder::Software;
+        }
+
         return *encoder;
     }
 
@@ -204,7 +211,7 @@ fn detect_best_hw_encoder() -> HwEncoder {
             }
         };
 
-        let no_hw_encoder = std::env::args().into_iter().any(|arg| arg == "no-hw-encoder");
+        let no_hw_encoder = std::env::args().into_iter().any(|arg| arg.contains("no-hw-encoder"));
         let mut adapter_index = 0;
 
         while let Ok(adapter) = factory.EnumAdapters1(adapter_index) {
@@ -219,7 +226,8 @@ fn detect_best_hw_encoder() -> HwEncoder {
                     0x10DE => { // Nvidia
                         if is_hw_encoder_dll_available("nvEncodeAPI.dll") {
                             log::info!("Detected NVIDIA GPU. Enabling NVENC.");
-                            return HwEncoder::NvidiaNvenc;
+                            best_encoder = HwEncoder::NvidiaNvenc;
+                            break;
                         } else {
                             log::warn!("NVIDIA GPU detected, but nvEncodeAPI.dll is missing. Fallback to software.");
                         }
@@ -227,7 +235,8 @@ fn detect_best_hw_encoder() -> HwEncoder {
                     0x1002 => { // AMD
                         if is_hw_encoder_dll_available("amfrt32.dll") {
                             log::info!("Detected AMD GPU. Enabling AMF.");
-                            return HwEncoder::AmdAmf;
+                            best_encoder = HwEncoder::AmdAmf;
+                            break;
                         } else {
                             log::warn!("AMD GPU detected, but amfrt32.dll is missing. Fallback to software.");
                         }
@@ -354,6 +363,7 @@ fn writer_thread_main(
                 if let Err(e) = buffered_stdin.write_all(&frame) { // it's fkung bottleneck, and it's peace of shit!! half-fixed with BufWriter
                     // Stop waiting for frames if pipe is broken
                     log::error!("Failed to write to FFmpeg stdin: {}. Stopping.", e);
+                    FFMPEG_SOMETHING_IS_WRONG.store(true, Ordering::Release);
                     break;
                 }
             },
@@ -372,6 +382,10 @@ fn writer_thread_main(
     // Wait for FFmpeg process to finish
     let status = child.wait().map_err(RecorderError::ProcessStart)?;
     log::debug!("FFmpeg process exited with status: {}", status);
+    if !status.success() {
+        log::error!("FFmpeg process failed with status: {}. Switching to software fallback for next run.", status);
+        FFMPEG_SOMETHING_IS_WRONG.store(true, Ordering::Release);
+    }
 
     stderr_thread.join().unwrap();
 
