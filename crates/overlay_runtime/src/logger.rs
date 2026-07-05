@@ -9,7 +9,7 @@ use custom_windows::toasts::TOAST_QUEUE;
 const LOG_LEVEL: LevelFilter = LevelFilter::Debug;
 
 /// Path to the log file.
-const LOG_FILE_PATH: &str = "d3d9_proxy_mod.log";
+const LOG_FILE_PATH: &str = "survey_playtest_addon.log";
 
 /// A custom logger implementation that forwards log records to the UI toast queue.
 struct ToastLogger;

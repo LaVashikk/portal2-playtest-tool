@@ -2,6 +2,8 @@
 
 release_notes_header = """
 The **Playtest Assistant** is a powerful in-game toolset for **Portal 2**, designed to streamline the collection of structured feedback and bug reports. It directly connects your playtesters to your development team via an integrated Discord bot, providing real-time, actionable data to improve your project.
+
+Discord bot: https://discord.com/oauth2/authorize?client_id=1427031735429894255
 """
 
 [[targets]]
@@ -11,6 +13,7 @@ archive_name = "d3d9_proxy.zip"
 files = [
     { source = "$DLL", destination = "bin/d3d9.dll" },
     { source = "assets/survey", destination = "bin/survey" },
+    { source = "assets/ffmpeg.exe", destination = "bin/ffmpeg.exe" },
     { source = "LICENSE", destination = "bin/LICENSE-PLAYTEST-TOOL" },
     { source = "README.md", destination = "README.md" }
 ]
@@ -22,7 +25,8 @@ crate_name = "injector_server_plugin"
 archive_name = "server_plugin.zip"
 files = [
     { source = "$DLL", destination = "portal2/addons/playtest_assistant.dll" },
-    { source = "assets/overlay.vdf", destination = "portal2/addons/overlay.vdf" },
+    { source = "assets/survey.vdf", destination = "portal2/addons/overlay.vdf" },
+    { source = "assets/ffmpeg.exe", destination = "portal2/addons/ffmpeg.exe" },
     { source = "assets/survey", destination = "portal2/addons/survey" },
     { source = "LICENSE", destination = "portal2/addons/LICENSE-PLAYTEST-TOOL" },
     { source = "README.md", destination = "README.md" }

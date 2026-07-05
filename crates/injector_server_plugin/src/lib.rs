@@ -88,7 +88,7 @@ static PLUGIN_VTABLE: IServerPluginCallbacksVtable = IServerPluginCallbacksVtabl
 
 static mut SERVER_PLUGIN: ServerPlugin = ServerPlugin { vtable: &PLUGIN_VTABLE };
 
-static PLUGIN_DESCRIPTION: &[u8] = b"Rust D3D9 Hook Plugin\0";
+static PLUGIN_DESCRIPTION: &[u8] = b"Plugin for easier mod playtesting\0";
 unsafe extern "thiscall" fn get_plugin_description(_this: *mut c_void) -> *const c_char {
     PLUGIN_DESCRIPTION.as_ptr() as *const c_char
 }
