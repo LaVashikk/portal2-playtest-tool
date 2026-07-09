@@ -381,9 +381,9 @@ fn writer_thread_main(
 
     // Wait for FFmpeg process to finish
     let status = child.wait().map_err(RecorderError::ProcessStart)?;
-    log::debug!("FFmpeg process exited with status: {}", status);
+    log::info!("FFmpeg process exited with status: {}", status);
     if !status.success() {
-        log::error!("FFmpeg process failed with status: {}. Switching to software fallback for next run.", status);
+        log::error!(target: "toast", "Recording process failed. Switching to software fallback for next run.");
         FFMPEG_SOMETHING_IS_WRONG.store(true, Ordering::Release);
     }
 

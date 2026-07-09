@@ -7,7 +7,7 @@ version.workspace = true
 workspace = true
 
 [lib]
-name = "egui_overlay_plugin"
+name = "playtest_assistant_plugin"
 crate-type = ["cdylib"]
 
 [dependencies]

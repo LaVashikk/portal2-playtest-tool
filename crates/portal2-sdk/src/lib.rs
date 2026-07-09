@@ -1,7 +1,73 @@
-//! portal2-sdk: A crate for interacting with the Source engine's C++ interfaces.
+//! # Portal 2 Rust SDK (`portal2-sdk`)
 //!
-//! This crate provides a safe and ergonomic API for interacting with the Source engine's C++ interfaces.
-//! It uses a signature-based approach to find the interfaces and their methods in memory.
+//! A high-level, safe, and ergonomic Rust library for interacting with the Source engine's internal C++ virtual
+//! interfaces and subsystems in **Portal 2**.
+//!
+//! This crate utilizes dynamic memory scanning (pattern/signature matching) and virtual vtable borrowing to interact
+//! directly with the game's core systems cleanly without raw C++ wrappers or hardcoded absolute pointers.
+//!
+//! ## Core Capabilities
+//!
+//! - **CVar & Command Management (`ICvar`)**: High-level builders (`ConVarBuilder`, `ConCommandBuilder`) to register custom console settings and commands with Rust callbacks.
+//! - **Developer Console Printing**: Direct, formatted printing to the in-game developer console (`~`) with custom RGBA colors via `con_print!` and `con_color_print!`.
+//! - **Engine & Server Interfaces**: Access to `IVEngineClient`, `IVEngineServer`, `IGameEventManager2`, entity systems, ray tracing, and debug overlays.
+//!
+//! ## Quick Start Examples
+//!
+//! ### 1. Printing to the Developer Console (`~`)
+//!
+//! ```rust,no_run
+//! use portal2_sdk::{con_print, con_color_print, Color};
+//!
+//! // Print standard white text:
+//! con_print!("Loaded mod version {}\n", 1.0);
+//!
+//! // Print colored status text:
+//! con_color_print!(Color::rgb(0, 255, 0), "[OK] Initialization successful!\n");
+//! con_color_print!(Color::rgb(255, 100, 0), "[WARN] High ping detected: {}ms\n", 150);
+//! ```
+//!
+//! ### 2. Registering a Custom Console Command (`ConCommand`)
+//!
+//! ```rust,no_run
+//! use portal2_sdk::{ConCommand, CCommand, CvarFlags, con_print, con_color_print, Color};
+//!
+//! extern "C" fn my_teleport_cmd(cmd: &CCommand) {
+//!     if let Some(target) = cmd.arg(1) {
+//!         con_color_print!(Color::rgb(0, 255, 255), "Teleporting to: {}\n", target);
+//!     } else {
+//!         con_print!("Usage: my_teleport <destination>\n");
+///     }
+/// }
+///
+/// fn setup_commands() {
+///     ConCommand::register_new(
+///         "my_teleport",
+///         "Teleports the player to a target location",
+///         CvarFlags::NONE,
+///         my_teleport_cmd,
+///     ).expect("Failed to register ConCommand");
+/// }
+/// ```
+///
+/// ### 3. Registering a Bounded Console Variable (`ConVar`)
+///
+/// ```rust,no_run
+/// use portal2_sdk::{ConVar, CvarFlags};
+///
+/// fn setup_cvars() {
+///     let fov = ConVar::builder("my_custom_fov", "90.0")
+///         .help_text("Custom field of view setting")
+///         .flags(CvarFlags::ARCHIVE)
+///         .min(60.0)
+///         .max(140.0)
+///         .register()
+///         .expect("Failed to register ConVar");
+///
+///     con_print!("Current custom FOV: {}", fov.get_float());
+/// }
+/// ```
+use std::sync::OnceLock;
 use std::{ffi::c_void, slice};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -18,14 +84,24 @@ mod client;
 mod cvar;
 pub mod input_system;
 pub mod game_events;
+pub mod engine_trace;
+pub mod debug_overlay;
 
 pub use crate::entities::Entities;
 use crate::input_system::IInputStackSystem;
 use crate::server::IVEngineServer;
 use crate::server_tools::IServerTools;
 pub use client::IVEngineClient;
-pub use cvar::{ICvar, CvarFlags, ConVar, ConCommandBase};
+pub use cvar::{ICvar, CvarFlags, ConVar, ConVarBuilder, ConCommand, ConCommandBuilder, ConCommandBase, CCommand, Color};
 pub use game_events::IGameEventManager2;
+pub use engine_trace::IEngineTrace;
+pub use debug_overlay::IVDebugOverlay;
+
+pub static ENGINE: OnceLock<Engine> = OnceLock::new();
+
+pub fn get_engine() -> &'static Engine {
+    ENGINE.get().expect("Engine not initialized!")
+}
 
 /// A struct that holds pointers to all the game engine interfaces we need.
 pub struct Engine {
@@ -34,10 +110,12 @@ pub struct Engine {
     icvar: ICvar,
     game_event_manager: IGameEventManager2,
     engine_server: IVEngineServer,
-    server_tools: IServerTools,
+    engine_trace: IEngineTrace,
+    debug_overlay: IVDebugOverlay,
+    server_tools: OnceLock<IServerTools>,
 }
 
-/// # Safety
+/// SAFETY:
 /// This implementation is safe under the assumption that this struct is written to only
 /// ONCE during initialization from a single thread, and then only read from.
 unsafe impl Send for Engine {}
@@ -67,8 +145,28 @@ impl Engine {
         &self.engine_server
     }
 
+    pub fn engine_trace(&self) -> &IEngineTrace {
+        &self.engine_trace
+    }
+
+    pub fn debug_overlay(&self) -> &IVDebugOverlay {
+        &self.debug_overlay
+    }
+
     pub fn server_tools(&self) -> &IServerTools {
-        &self.server_tools
+        if let Some(tools) = self.server_tools.get() {
+            return tools;
+        }
+
+        // Okay, lets try init this now...
+        if let Some(tools) = Self::initialize_server_tools() {
+            let _ = self.server_tools.set(tools);
+            if let Some(tools) = self.server_tools.get() {
+                return tools;
+            }
+        }
+
+        panic!("Failed to initialize IServerTools interface. Possibly called too early.")
     }
 
     pub fn entities(&self) -> Entities<'_> {
@@ -76,11 +174,32 @@ impl Engine {
     }
 }
 
+// A helper macro to reduce boilerplate when finding functions.
+macro_rules! find_fn {
+    ($mem_slice:expr, $base_addr:expr, $pattern:expr, $mask:expr, $fn_name:literal) => {
+        match memory::find_pattern($mem_slice, $pattern, $mask) {
+            Some(offset) => unsafe { std::mem::transmute($base_addr.add(offset)) },
+            None => {
+                return Err(format!("{} signature not found!", $fn_name));
+            }
+        }
+    };
+}
+macro_rules! get_vfunc { // for unique cases
+    ($this:expr, $idx:expr) => {
+        unsafe {
+            let vtable = *($this as *const *const usize);
+            let func_ptr = vtable.add($idx).read();
+            std::mem::transmute(func_ptr)
+        }
+    };
+}
+
 
 /// Initializes all engine interfaces by finding them in memory and resolving function pointers.
 /// This is the core of the signature-based approach. It must be called once before `get()`.
 impl Engine {
-    pub fn initialize() -> Result<Engine, String> {
+    pub fn initialize() -> Result<&'static Engine, String> {
         static INITED: AtomicBool = AtomicBool::new(false);
         if INITED.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
             return Err("Re-initialization is prohibited!".to_string());
@@ -123,11 +242,18 @@ impl Engine {
             return Err("Failed to find IVEngineServer interface pointer.".to_string());
         }
 
-        let server_tools_this = unsafe {
-            interfaces::find_interface::<c_void>(b"server.dll\0", b"VSERVERTOOLS001\0")
+        let engine_trace_this = unsafe {
+            interfaces::find_interface::<c_void>(b"engine.dll\0", b"EngineTraceServer004\0")
         };
-        if server_tools_this.is_null() {
-            return Err("Failed to find IServerTools interface pointer.".to_string());
+        if engine_trace_this.is_null() {
+            return Err("Failed to find IEngineTrace interface pointer.".to_string());
+        }
+
+        let debug_overlay_this = unsafe {
+            interfaces::find_interface::<c_void>(b"engine.dll\0", b"VDebugOverlay004\0")
+        };
+        if debug_overlay_this.is_null() {
+            return Err("Failed to find IVDebugOverlay interface pointer.".to_string());
         }
 
         // --- Get the memory ranges of the modules to scan. ---
@@ -148,27 +274,6 @@ impl Engine {
         let vstdlib_mem = unsafe { slice::from_raw_parts(vstdlib_base, vstdlib_size) };
 
         // --- Find function addresses using signatures and construct interface structs. ---
-
-        // A helper macro to reduce boilerplate when finding functions.
-        macro_rules! find_fn {
-            ($mem_slice:expr, $base_addr:expr, $pattern:expr, $mask:expr, $fn_name:literal) => {
-                match memory::find_pattern($mem_slice, $pattern, $mask) {
-                    Some(offset) => unsafe { std::mem::transmute($base_addr.add(offset)) },
-                    None => {
-                        return Err(format!("{} signature not found!", $fn_name));
-                    }
-                }
-            };
-        }
-        macro_rules! get_vfunc { // for unique cases
-            ($this:expr, $idx:expr) => {
-                unsafe {
-                    let vtable = *($this as *const *const usize);
-                    let func_ptr = vtable.add($idx).read();
-                    std::mem::transmute(func_ptr)
-                }
-            };
-        }
 
         use signatures::iv_engine_client::*;
         let client = IVEngineClient {
@@ -214,6 +319,11 @@ impl Engine {
         let icvar = ICvar {
             this: icvar_this as *mut _,
             find_var: find_fn!(vstdlib_mem, vstdlib_base, FIND_VAR_PATTERN, FIND_VAR_MASK, "FindVar"),
+            find_command_base: get_vfunc!(icvar_this, 13),
+            register_con_command: get_vfunc!(icvar_this, 9),
+            unregister_con_command: get_vfunc!(icvar_this, 10),
+            console_color_printf: get_vfunc!(icvar_this, 24),
+            console_printf: get_vfunc!(icvar_this, 25),
         };
 
         let game_event_manager = IGameEventManager2 {
@@ -248,7 +358,7 @@ impl Engine {
             get_entity_count: get_vfunc!(engine_server_this, 20),
             get_player_net_info: get_vfunc!(engine_server_this, 21),
             create_edict: get_vfunc!(engine_server_this, 22),
-            remove_edict: get_vfunc!(engine_server_this, 23),
+            remove_edict: get_vfunc!(engine_server_this, 23), // todo: invalid index?
             pv_alloc_ent_private_data: get_vfunc!(engine_server_this, 24),
             free_ent_private_data: get_vfunc!(engine_server_this, 25),
             save_alloc_memory: get_vfunc!(engine_server_this, 26),
@@ -371,7 +481,52 @@ impl Engine {
             get_client_cross_play_platform: get_vfunc!(engine_server_this, 143),
         };
 
+        let engine_trace = IEngineTrace {
+            this: engine_trace_this as *mut _,
+            get_point_contents: get_vfunc!(engine_trace_this, 0),
+            clip_ray_to_entity: get_vfunc!(engine_trace_this, 3),
+            trace_ray:          get_vfunc!(engine_trace_this, 5),
+            get_collideable:    get_vfunc!(engine_trace_this, 12),
+        };
 
+        let debug_overlay = IVDebugOverlay {
+            this: debug_overlay_this as *mut _,
+            add_box_overlay: get_vfunc!(debug_overlay_this, 1),
+            add_sphere_overlay: get_vfunc!(debug_overlay_this, 2),
+            add_line_overlay: get_vfunc!(debug_overlay_this, 4),
+            add_text_overlay: get_vfunc!(debug_overlay_this, 5),
+            add_screen_text_overlay: get_vfunc!(debug_overlay_this, 7),
+            screen_position: get_vfunc!(debug_overlay_this, 12),
+            clear_all_overlays: get_vfunc!(debug_overlay_this, 16),
+        };
+
+        let server_tools = OnceLock::new();
+        if let Some(st) = Self::initialize_server_tools() {
+            let _ = server_tools.set(st);
+        }
+
+        let engine = Engine {
+            client,
+            input_stack_system,
+            icvar,
+            game_event_manager,
+            engine_server,
+            engine_trace,
+            debug_overlay,
+            server_tools,
+        };
+
+        ENGINE.set(engine).map_err(|_| "Engine already initialized!")?;
+        Ok(&ENGINE.get().unwrap())
+    }
+
+    fn initialize_server_tools() -> Option<IServerTools> {
+        let server_tools_this = unsafe {
+            interfaces::find_interface::<c_void>(b"server.dll\0", b"VSERVERTOOLS001\0")
+        };
+        if server_tools_this.is_null() {
+            return None;
+        }
         let server_tools = IServerTools {
             this: server_tools_this as *mut _,
             get_iserver_entity: get_vfunc!(server_tools_this, 1),
@@ -384,9 +539,9 @@ impl Engine {
             next_entity: get_vfunc!(server_tools_this, 8),
             find_entity_by_hammer_id: get_vfunc!(server_tools_this, 9),
             get_key_value: get_vfunc!(server_tools_this, 10),
-            set_key_value_str: get_vfunc!(server_tools_this, 11),
+            set_key_value_vec: get_vfunc!(server_tools_this, 11),
             set_key_value_flt: get_vfunc!(server_tools_this, 12),
-            set_key_value_vec: get_vfunc!(server_tools_this, 13),
+            set_key_value_str: get_vfunc!(server_tools_this, 13),
             create_entity_by_name: get_vfunc!(server_tools_this, 14),
             dispatch_spawn: get_vfunc!(server_tools_this, 15),
             destroy_entity_by_hammer_id: get_vfunc!(server_tools_this, 16),
@@ -397,14 +552,47 @@ impl Engine {
             remove_entity: get_vfunc!(server_tools_this, 21),
         };
 
+        Some(server_tools)
+    }
+}
 
-        Ok(Engine {
-            client,
-            input_stack_system,
-            icvar,
-            game_event_manager,
-            engine_server,
-            server_tools,
-        })
+/// Prints a formatted message directly to the in-game developer console (`~`).
+#[macro_export]
+macro_rules! con_print {
+    ($($arg:tt)*) => {
+        $crate::console_print(&std::format!($($arg)*))
+    };
+}
+
+/// Prints a colored formatted message directly to the in-game developer console (`~`).
+///
+/// Accepts a `Color` (RGBA/RGB) struct as the first argument, followed by standard `format!` arguments.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use portal2_sdk::{con_color_print, Color};
+///
+/// con_color_print!(Color::rgb(0, 255, 0), "[SUCCESS] Plugin enabled successfully.\n");
+/// con_color_print!(Color::rgb(255, 50, 50), "[ERROR] Failed to read config code {}\n", 404);
+/// ```
+#[macro_export]
+macro_rules! con_color_print {
+    ($color:expr, $($arg:tt)*) => {
+        $crate::console_color_print($color, &std::format!($($arg)*))
+    };
+}
+
+/// Prints a raw string directly to the in-game developer console (`~`).
+pub fn console_print(msg: &str) {
+    if let Some(engine) = ENGINE.get() {
+        engine.cvar_system().console_print(msg);
+    }
+}
+
+/// Prints a raw colored (`RGBA`) string directly to the in-game developer console (`~`).
+pub fn console_color_print(color: Color, msg: &str) {
+    if let Some(engine) = ENGINE.get() {
+        engine.cvar_system().console_color_print(color, msg);
     }
 }

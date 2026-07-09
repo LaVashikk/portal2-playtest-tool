@@ -12,6 +12,7 @@ members = [
 
     # Overlay system
     "crates/overlay_runtime",
+    "crates/overlay_types",
     "crates/custom_windows",
     "crates/recorder",
 
@@ -19,13 +20,14 @@ members = [
     "crates/portal2-sdk",
 
     # Server backend
-    "crates/feedback-server"]
+    "crates/feedback-server"
+]
 default-members = ["crates/injector_d3d9_proxy"]
 
 [workspace.package]
 publish = false
 edition = "2024"
-version = "0.1.0"
+version = "1.0.0"
 
 [workspace.lints.rust] # For exploratory dev only.
 unused = { level = "allow", priority = -1 }
@@ -40,6 +42,8 @@ portal2-sdk = { path = "crates/portal2-sdk" }
 custom_windows = { path = "crates/custom_windows" }
 d3d9_hook_core = { path = "crates/d3d9_hook_core" }
 overlay_runtime = { path = "crates/overlay_runtime" }
+overlay_types = { path = "crates/overlay_types" }
+
 recorder = { path = "crates/recorder" }
 
 [workspace.dependencies.windows]

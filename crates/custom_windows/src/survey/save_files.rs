@@ -1,9 +1,9 @@
-use std::{fs::File, io::{self, Read, Write}, path::{Path, PathBuf}, sync::{LazyLock, Mutex, atomic::AtomicU16}};
+use std::{fs::File, io::{self, Read, Write}, path::PathBuf, sync::{LazyLock, Mutex, atomic::AtomicU16}};
 
 use anyhow::Result;
 use zip::{ZipWriter, write::SimpleFileOptions};
 
-use crate::{ENGINE, survey::{ClientConfig, SURVEY_ANSWERS_RELATIVE}};
+use crate::survey::{ClientConfig, SURVEY_ANSWERS_RELATIVE};
 
 pub static DEMO_FILES: LazyLock<Mutex<Vec<PathBuf>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 pub static LOGS_FILE: LazyLock<Mutex<Option<PathBuf>>> = LazyLock::new(|| Mutex::new(None));
@@ -13,7 +13,7 @@ pub static LAST_MAP_NAME: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(
 pub static LAST_DEMO_INDEX: AtomicU16 = AtomicU16::new(0);
 
 pub fn init_saver(config: &ClientConfig) {
-    let engine = ENGINE.get().unwrap();
+    let engine = portal2_sdk::get_engine();
     let save_demo = config.save_demos;
     let save_logs = config.save_console_logs;
     let save_rec = config.save_recordings;
@@ -23,7 +23,7 @@ pub fn init_saver(config: &ClientConfig) {
     }
 
     engine.game_event_manager().listen("player_connect", move |_| {
-        let engine = ENGINE.get().unwrap();
+        let engine = portal2_sdk::get_engine();
         if save_demo {
             let map_name = LAST_MAP_NAME.lock().unwrap().clone();
             let demo_index = LAST_DEMO_INDEX.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -39,7 +39,7 @@ pub fn init_saver(config: &ClientConfig) {
     });
 
     engine.game_event_manager().listen("server_spawn", move |event| {
-        let engine = ENGINE.get().unwrap();
+        let engine = portal2_sdk::get_engine();
         let timestamp = super::get_timestamp();
 
         let map_name = event.get_string("mapname", "unknown");
@@ -70,12 +70,11 @@ pub fn init_saver(config: &ClientConfig) {
         if save_rec {
             start_recording(&map_name);
         }
-
     });
 }
 
 pub fn stop_demo_recording() {
-    let engine = ENGINE.get().unwrap();
+    let engine = portal2_sdk::get_engine();
     engine.client().execute_client_cmd_unrestricted("stop");
 }
 
@@ -117,7 +116,7 @@ pub fn start_recording(map_name: &str) {
         let video_full_path = super::get_answer_dir
             ().join("records").join(format!("recording_{}_{}.mp4", map_name, timestamp));
 
-        let game_resolution = ENGINE.get().expect("unreachable").client().get_screen_size();
+        let game_resolution = portal2_sdk::get_engine().client().get_screen_size();
         let rec_res = recorder::calc_aligned_resolution(game_resolution.0 as u32, game_resolution.1 as u32);
 
         let _ = recorder.start_recording(&video_full_path, rec_res);

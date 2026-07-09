@@ -1,5 +1,4 @@
 use std::ffi::{CStr, c_char, c_int};
-use crate::server_tools::IServerTools;
 use super::{Vector, QAngle, SendTable};
 
 /// A unique identifier for a networkable entity. It combines an entity index
@@ -114,6 +113,15 @@ impl IServerEntity {
         }
     }
 
+    /// Returns the entity handle, which contains the entity index.
+    pub fn get_handle(&self) -> CBaseHandle {
+        unsafe {
+            let vtable = *(self as *const _ as *const *const usize);
+            let get_handle: unsafe extern "thiscall" fn(*const IServerEntity) -> CBaseHandle = std::mem::transmute(vtable.add(2).read());
+            get_handle(self)
+        }
+    }
+
     /// Returns the model index of this entity.
     pub fn get_model_index(&self) -> i32 {
         unsafe {
@@ -142,6 +150,17 @@ impl CBaseEntity {
         unsafe { &mut *(self as *mut _ as *mut IServerEntity) }
     }
 
+    /// Returns the entity index (extracted from the handle).
+    pub fn get_index(&self) -> i32 {
+        self.as_server_entity().get_handle().0 as i32 & 0xFFF
+    }
+
+    /// Wrapper for IServerTools::GetKeyValue.
+    pub fn get_key_value(&self, key: &str) -> Option<String> {
+        let tools = crate::get_engine().server_tools();
+        tools.get_key_value(self, key)
+    }
+
     /// Shortcut: Gets the network Edict directly from the entity.
     pub fn get_edict<'a>(&self) -> Option<&'a mut Edict> {
         self.as_server_entity().get_networkable()?.get_edict()
@@ -166,17 +185,13 @@ impl CBaseEntity {
     //
 
     /// Retrieves the networkable class name of the entity.
-    /// Returns an empty string if the entity is not networkable.
     pub fn get_classname(&self) -> String {
-        if let Some(net) = self.get_networkable() {
-            net.get_class_name()
-        } else {
-            String::new()
-        }
+        self.get_class_name()
     }
 
     /// Reads the current health of the entity via the engine's DataMap.
-    pub fn get_health(&self, tools: &IServerTools) -> i32 {
+    pub fn get_health(&self) -> i32 {
+        let tools = crate::get_engine().server_tools();
         if let Some(val) = tools.get_key_value(self, "health") {
             val.parse().unwrap_or(0)
         } else {
@@ -185,7 +200,8 @@ impl CBaseEntity {
     }
 
     /// Returns the current absolute world coordinates (origin) of the entity.
-    pub fn get_origin(&self, tools: &IServerTools) -> Vector {
+    pub fn get_origin(&self) -> Vector {
+        let tools = crate::get_engine().server_tools();
         if let Some(val) = tools.get_key_value(self, "origin") {
             // The string format is typically: "X Y Z"
             let parts: Vec<&str> = val.split_whitespace().collect();
@@ -201,7 +217,8 @@ impl CBaseEntity {
     }
 
     /// Returns the rotation angles of the entity (Pitch, Yaw, Roll).
-    pub fn get_angles(&self, tools: &IServerTools) -> QAngle {
+    pub fn get_angles(&self) -> QAngle {
+        let tools = crate::get_engine().server_tools();
         if let Some(val) = tools.get_key_value(self, "angles") {
             let parts: Vec<&str> = val.split_whitespace().collect();
             if parts.len() >= 3 {
@@ -216,12 +233,14 @@ impl CBaseEntity {
     }
 
     /// Returns the target name ("targetname") of the entity.
-    pub fn get_name(&self, tools: &IServerTools) -> String {
+    pub fn get_name(&self) -> String {
+        let tools = crate::get_engine().server_tools();
         tools.get_key_value(self, "targetname").unwrap_or_default()
     }
 
     /// Removes the entity from the world using IServerTools.
-    pub fn destroy(&self, tools: &IServerTools) {
+    pub fn destroy(&self) {
+        let tools = crate::get_engine().server_tools();
         if let Some(hammer_id_str) = tools.get_key_value(self, "hammerid") {
             if let Ok(hammer_id) = hammer_id_str.parse::<i32>() {
                 tools.remove_entity(hammer_id);
@@ -230,12 +249,14 @@ impl CBaseEntity {
     }
 
     /// Sets a string key-value field for the entity.
-    pub fn set_key_value(&mut self, tools: &IServerTools, key: &str, value: &str) -> bool {
+    pub fn set_key_value(&mut self, key: &str, value: &str) -> bool {
+        let tools = crate::get_engine().server_tools();
         tools.set_key_value_str(self, key, value)
     }
 
     /// Sets an integer key-value field for the entity.
-    pub fn set_key_value_int(&mut self, tools: &IServerTools, key: &str, value: i32) -> bool {
+    pub fn set_key_value_int(&mut self, key: &str, value: i32) -> bool {
+        let tools = crate::get_engine().server_tools();
         tools.set_key_value_flt(self, key, value as f32)
     }
 }

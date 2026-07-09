@@ -491,17 +491,20 @@ dependencies = [
 
 [[package]]
 name = "custom_windows"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "egui",
  "egui-notify",
  "indexmap",
  "log",
+ "overlay_types",
  "portal2-sdk",
  "recorder",
  "serde",
  "serde_json",
+ "source-fs",
+ "source-vmt",
  "ureq",
  "windows",
  "zip 8.4.0",
@@ -509,7 +512,7 @@ dependencies = [
 
 [[package]]
 name = "d3d9_hook_core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "log",
@@ -713,7 +716,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "feedback-server"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "axum",
  "dashmap",
@@ -1275,7 +1278,7 @@ dependencies = [
 
 [[package]]
 name = "injector_client_wrapper"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "d3d9_hook_core",
  "log",
@@ -1285,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "injector_d3d9_proxy"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "d3d9_hook_core",
  "log",
@@ -1295,7 +1298,7 @@ dependencies = [
 
 [[package]]
 name = "injector_server_plugin"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "d3d9_hook_core",
  "log",
@@ -1604,17 +1607,26 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
 name = "overlay_runtime"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "custom_windows",
  "d3d9_hook_core",
  "egui",
  "egui_backend",
  "log",
+ "overlay_types",
  "portal2-sdk",
  "recorder",
  "simplelog",
  "windows",
+]
+
+[[package]]
+name = "overlay_types"
+version = "1.0.0"
+dependencies = [
+ "egui",
+ "egui-notify",
 ]
 
 [[package]]
@@ -1811,7 +1823,7 @@ dependencies = [
 
 [[package]]
 name = "recorder"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "log",
  "thiserror 1.0.69",
@@ -2282,6 +2294,38 @@ checksum = "17129e116933cf371d018bb80ae557e889637989d8638274fb25622827b03881"
 dependencies = [
  "libc",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "source-fs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bbd94f5ea505cbbb67dccf78adbc27ef78ffed8095f28eec371fe61b401ccea"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "source-kv"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d492ba5f9e33d4236795f025e0e9bc85103e8e7cc675cf6e7ca3eb5299646af6"
+dependencies = [
+ "indexmap",
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "source-vmt"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "190c05d9c8028c937b9a34e0b87b50f8f5c21247b945ea27ae2b0d03584f6e80"
+dependencies = [
+ "indexmap",
+ "serde",
+ "source-fs",
+ "source-kv",
 ]
 
 [[package]]
@@ -3424,7 +3468,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
 dependencies = [
  "cfg-if",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

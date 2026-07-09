@@ -1,3 +1,5 @@
+use overlay_types::{events::OverlayEvent, toasts};
+
 use crate::{survey::DEFAULT_SURVEY, SharedState, Window};
 use super::{FormAction, WidgetForm};
 
@@ -19,86 +21,63 @@ impl SurveyWin {
 impl Window for SurveyWin {
     fn name(&self) -> &'static str { "Survey" }
 
-    fn is_should_render(&self, _shared_state: &SharedState, engine: &portal2_sdk::Engine) -> bool {
-        let cvar_system = engine.cvar_system();
-        match cvar_system.find_var("open_survey") {
-            Some(val) => !val.get_string().chars().all(|c| c.is_ascii_digit()) || val.get_int() != 0,
-            None => { engine.client().client_cmd("setinfo open_survey 0"); false }, // todo: init it in other place!
+    fn on_event(&mut self, event: &overlay_types::events::OverlayEvent, _shared_state: &mut SharedState) {
+        match event {
+            OverlayEvent::Command(name) => {
+                if self.form.load_form(name.as_str()).is_err() {
+                    return
+                }
+
+                self.set_open(true);
+                portal2_sdk::con_print!("Opening {}...\n", name);
+            }
+
+            _ => {}
         }
     }
 
     fn draw(
         &mut self,
         ctx: &egui::Context,
-        shared_state: &mut SharedState,
+        _shared_state: &mut SharedState,
         engine: &portal2_sdk::Engine,
     ) {
-        // This block triggers after `load_form` or on the first opening
-        if !self.is_opened {
-            let target_survey_path = engine.cvar_system().find_var("open_survey")
-                .map(|cvar| cvar.get_string())
-                .unwrap_or_default();
-
-            // If a new survey is requested, load it
-            let is_custom_survey_requested = !target_survey_path.chars().all(|c| c.is_ascii_digit());
-            if is_custom_survey_requested {
-                if self.form.config_path != target_survey_path {
-                    if self.form.load_form(&target_survey_path).is_err() {
-                        // Failed to load the requested survey, so we close the window
-                        let kv = engine.cvar_system().find_var("open_survey").unwrap();
-                        kv.set_value_int(0); // todo: use `reset` later
-                        kv.set_value_str("0");
-                        return;
-                    }
-                }
-            }
-            //
-            else if self.form.config_path != DEFAULT_SURVEY {
-                // The default survey is expected to always be valid.
-                self.form.load_form(DEFAULT_SURVEY).unwrap();
-            }
-
-
-            let client = engine.client();
-            if !client.is_paused() && client.is_in_game() { client.client_cmd("pause"); }
-            self.is_opened = true;
-            shared_state.surver_is_opened = true;
-        }
-
         if self.form.draw_modal_window(ctx, engine, false) == FormAction::Submitted {
             match self.form.save_results(engine, None) {
                 Ok(_) => {
-                    // reset `open_survey` value!
-                    let kv = engine.cvar_system().find_var("open_survey").unwrap();
-                    // kv.reset(); // todo: add it later
-                    kv.set_value_int(0);
-                    kv.set_value_float(0.0);
-                    kv.set_value_str("");
+                    // reset SURVEY!
+                    self.set_open(false);
+                    self.form.reset_state();
 
                     let client = engine.client();
                     if client.is_in_game() { client.client_cmd("unpause"); }
-                    self.is_opened = false;
-                    shared_state.surver_is_opened = false;
-                    self.form.reset_state();
                 }
                 Err(e) => {
-                    log::error!("Failed to save survey to disk.");
-                    log::debug!("Error saving survey: {}", e);
+                    toasts::error("Failed to save survey to disk", 1500);
+                    log::error!("Error saving survey to disk: {}", e);
                 }
             }
         }
     }
 
-    fn on_raw_input(&mut self, umsg: u32, _wparam: u16) -> bool {
-        use windows::Win32::UI::WindowsAndMessaging::{WM_CHAR, WM_KEYDOWN, WM_SYSKEYDOWN};
+    fn is_open(&self) -> bool { self.is_opened }
 
-        if !self.is_opened { return true; }
-        match umsg {
-            WM_KEYDOWN | WM_SYSKEYDOWN | WM_CHAR => false,
-            _ => true
+    fn set_open(&mut self, open: bool) {
+        if self.is_opened == open {
+            return
         }
-    }
 
-    fn toggle(&mut self) { /* Controlling via CVar */ }
-    fn is_open(&self) -> bool { true }
+        let client = portal2_sdk::get_engine().client();
+        if open {
+            client.client_cmd("pause");
+        } else {
+            client.client_cmd("unpause");
+        }
+
+        self.is_opened = open;
+        crate::edit_shared_state(move |state| {
+            state.is_overlay_focused = open;
+            state.surver_is_opened = open;
+        });
+    }
 }

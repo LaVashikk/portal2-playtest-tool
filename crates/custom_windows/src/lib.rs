@@ -3,20 +3,61 @@
 //! This crate is responsible for defining the UI of the overlay. It contains the `Window` trait,
 //! which every window must implement, and the `regist_windows` function, which assembles and
 //! returns a collection of all active UI windows.
-use std::sync::{LazyLock, Mutex, OnceLock};
-use portal2_sdk::Engine;
+use std::sync::{OnceLock, mpsc};
 
-// TODO: Temp workaround. fix later `portal2-sdk` crate!!!
-pub static ENGINE: OnceLock<Engine> = OnceLock::new();
+use overlay_types::{HotkeyManager, events::OverlayEvent, toasts};
+use source_fs::{DummyVpk, P2GameInfo};
+use portal2_sdk::Engine;
 
 /// Base font scale factor
 pub const BASE_TEXT_SCALE: f32 = 1.25;
+/// List of registered window names.
+pub static REGISTED_WINDOWS: OnceLock<Vec<&'static str>> = OnceLock::new();
 
-/// Shared state accessible to all windows.
-#[derive(Debug, Default, Clone)]
+pub type SharedStateAction = Box<dyn FnOnce(&mut SharedState) + Send>;
+pub static STATE_ACTION_TX: OnceLock<mpsc::Sender<SharedStateAction>> = OnceLock::new();
+
+/// --- THE SINGLE SOURCE OF TRUTH ---
+/// You can add all your custom mod fields here!
 pub struct SharedState {
     pub is_overlay_focused: bool,
+    pub allow_inspect_mode: bool,
+    pub hotkeys: HotkeyManager,
+    pub valve_fs: source_fs::FileSystem<DummyVpk>,
+
+    // Add your custom game-specific fields below:
     pub surver_is_opened: bool,
+}
+
+impl Default for SharedState {
+    fn default() -> Self {
+        let game_dir = portal2_sdk::get_engine().engine_server().get_game_dir();
+        let valve_fs = source_fs::create_fs_custom::<P2GameInfo, String>(game_dir)
+            .expect("Failed to create custom file system");
+
+        Self {
+            is_overlay_focused: false,
+            allow_inspect_mode: false,
+            hotkeys: HotkeyManager::default(),
+            valve_fs,
+
+            // we dont wanna open bug report if we already open some survey
+            surver_is_opened: false,
+        }
+    }
+}
+
+/// Global helper to safely modify `SharedState` from any thread, engine event listener, or callback.
+///
+/// The closure `f` will be pushed to an internal channel and executed on the UI thread at the start of the next frame.
+#[allow(dead_code)]
+pub fn edit_shared_state<F>(f: F)
+where
+    F: FnOnce(&mut SharedState) + Send + 'static,
+{
+    if let Some(tx) = STATE_ACTION_TX.get() {
+        let _ = tx.send(Box::new(f));
+    }
 }
 
 /// Trait that every window must implement.
@@ -26,10 +67,13 @@ pub trait Window {
     fn name(&self) -> &'static str;
 
     /// Shows or hides the window.
-    fn toggle(&mut self);
+    fn set_open(&mut self, _open: bool);
 
     /// Returns whether the window is open.
     fn is_open(&self) -> bool;
+
+    /// Triggered whenever an event (hotkey, game event, command) is fired.
+    fn on_event(&mut self, _event: &OverlayEvent, _shared_state: &mut SharedState) {}
 
     /// Determines if the window should be rendered in the current frame.
     /// This is checked before calling `draw()`.
@@ -37,71 +81,24 @@ pub trait Window {
 
     /// The drawing logic of the window.
     fn draw(&mut self, ctx: &egui::Context, shared_state: &mut SharedState, engine: &Engine);
-
-    /// Raw input signal processing, optional.
-    /// # Returns
-    /// * `true` - if the input should be passed to the game.
-    /// * `false` - if the input should be "eaten" (blocked).
-    fn on_raw_input(&mut self, _umsg: u32, _wparam: u16) -> bool { true }
 }
 
+pub mod survey;
 
-/// Assembles and returns a collection of all active UI windows.
-///
-/// This function is the designated discovery point for UI components. The core
-/// application calls it to populate the `UiManager`'s window list.
-pub fn regist_windows(_engine: &Engine) -> Vec<Box<dyn Window + Send>> {
-    survey::init_survey();
-    log::info!("UI components initialized.");
+/// This function is the designated discovery point for UI components.
+pub fn regist(_engine: &Engine, _shared_state: &mut SharedState) -> Vec<Box<dyn Window + Send>> {
+    if !survey::init_survey() {
+        toasts::error("Failed initialize survey UI", 10000);
+        return vec![]
+    }
+
+    log::info!(target: "toast", "UI components initialized");
 
     let config = survey::GLOBAL_SURVEY_CONFIG.get().unwrap();
     let bug_report_config = config.bug_report_config.clone();
 
     vec![
-        Box::new(OverlayText::default()),
-        Box::new(toasts::ToastWindow::new()),
         Box::new(survey::SurveyWin::new()),
         Box::new(survey::BugReportWin::new(&bug_report_config)),
     ]
-}
-
-
-// ---------------------- \\
-//      YOUR WINDOWS      \\
-// ---------------------- \\
-mod survey;
-pub mod toasts;
-
-#[derive(Default)] // default text info
-pub struct OverlayText;
-impl Window for OverlayText {
-    fn name(&self) -> &'static str { "Overlay Text" }
-    fn toggle(&mut self) {}
-    fn is_open(&self) -> bool { true }
-
-    fn draw(&mut self, ctx: &egui::Context, shared_state: &mut SharedState, _engine: &Engine) {
-        let screen_rect = ctx.screen_rect();
-        let painter = ctx.debug_painter();
-
-        if shared_state.is_overlay_focused {
-            let text = "Focus Captured; Press F3 to toggle";
-            let font_id = egui::FontId::proportional(24.0);
-            let text_color = egui::Color32::WHITE;
-            let shadow_color = egui::Color32::BLACK;
-            let pos = egui::pos2(screen_rect.center().x, screen_rect.bottom() - 50.0);
-            let anchor = egui::Align2::CENTER_BOTTOM;
-
-            // Shadow
-            painter.text(
-                pos + egui::vec2(2.0, 2.0),
-                anchor,
-                text,
-                font_id.clone(),
-                shadow_color,
-            );
-
-            // Foreground text
-            painter.text(pos, anchor, text, font_id, text_color);
-        }
-    }
 }

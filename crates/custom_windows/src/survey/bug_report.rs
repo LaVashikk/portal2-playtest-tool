@@ -2,7 +2,8 @@ use std::sync::OnceLock;
 
 use crate::{SharedState, Window};
 use super::{FormAction, WidgetForm};
-use egui::{Align2, Color32, Stroke};
+use egui::{Align2, Color32, Stroke, TextBuffer};
+use overlay_types::{events::{self, OverlayEvent}, toasts};
 use portal2_sdk::Engine;
 
 pub static BUG_ICON: OnceLock<String> = OnceLock::new();
@@ -24,7 +25,7 @@ impl BugReportWin {
     fn save_form_results(&self, engine: &Engine) -> anyhow::Result<()> {
         let mut extra_data = indexmap::IndexMap::new();
         let current_angles = engine.client().get_view_angles(); // todo!
-        let player_pos = engine.entities().find_by_classname(None, "player").map(|ent| ent.get_origin(engine.server_tools())).unwrap_or_default();
+        let player_pos = engine.entities().find_by_classname(None, "player").map(|ent| ent.get_origin()).unwrap_or_default();
         extra_data.insert("Raw Timestamp".to_string(), serde_json::json!(engine.client().get_last_time_stamp()));
         extra_data.insert("Player Position".to_string(), serde_json::json!(player_pos.to_string()));
         extra_data.insert("Player Angles".to_string(), serde_json::json!(current_angles.to_string()));
@@ -33,6 +34,7 @@ impl BugReportWin {
     }
 
     fn close_window(&mut self) {
+        events::push_event(OverlayEvent::SetOverlayFocus(false));
         self.is_modal_open = false;
         self.form.reset_state();
     }
@@ -81,6 +83,7 @@ impl BugReportWin {
             }
 
             if is_hovered && response.clicked() {
+                events::push_event(OverlayEvent::SetOverlayFocus(true));
                 self.is_modal_open = true;
             }
             response.on_hover_text("Report a Bug or suggest an idea");
@@ -93,7 +96,9 @@ impl Window for BugReportWin {
 
     fn is_should_render(&self, shared_state: &SharedState, engine: &Engine) -> bool {
         // The window should only be rendered when the game is paused to show the button.
-        engine.client().is_paused() && engine.client().is_in_game() && !shared_state.surver_is_opened
+        (engine.client().is_paused() && engine.client().is_in_game() && !shared_state.surver_is_opened)
+        // or if we opened ALREADY
+        || self.is_modal_open
     }
 
     fn draw(&mut self, ctx: &egui::Context, _shared_state: &mut SharedState, engine: &Engine) {
@@ -107,8 +112,8 @@ impl Window for BugReportWin {
                 FormAction::Submitted => {
                     // The Submit button was clicked
                     if let Err(e) = self.save_form_results(engine) {
-                        log::error!("Failed to save bug report to disk.");
-                        log::debug!("Error saving bug report: {}", e);
+                        log::error!("Failed to save bug report to disk! Reason: {}", e);
+                        toasts::error("Failed to save bug report to disk", 2000);
                     }
 
                     self.close_window();
@@ -123,16 +128,12 @@ impl Window for BugReportWin {
         }
     }
 
-    fn on_raw_input(&mut self, umsg: u32, _wparam: u16) -> bool {
-        use windows::Win32::UI::WindowsAndMessaging::{WM_CHAR, WM_KEYDOWN, WM_SYSKEYDOWN};
-        if !self.is_modal_open { return true; }
-
-        match umsg {
-            WM_KEYDOWN  | WM_SYSKEYDOWN  | WM_CHAR => false,
-            _ => true
-        }
-    }
-
-    fn toggle(&mut self) { /* Controlling via a button in the UI */ }
     fn is_open(&self) -> bool { true }
+
+    fn set_open(&mut self, open: bool) {
+        self.is_modal_open = open;
+        crate::edit_shared_state(move |state| {
+            state.is_overlay_focused = open;
+        });
+    }
 }

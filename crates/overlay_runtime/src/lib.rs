@@ -7,10 +7,9 @@
 
 #![cfg(all(target_os = "windows", target_pointer_width = "32"))]
 
-use std::path::PathBuf;
-use std::sync::{Mutex, Once, OnceLock};
-use recorder::Recorder;
-use portal2_sdk::utils::get_dll_directory;
+use std::sync::{Mutex, Once, OnceLock, mpsc};
+use custom_windows::{SharedState, SharedStateAction};
+use overlay_types::events::OverlayEvent;
 use windows::core::PCSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -22,7 +21,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::Win32::Graphics::Direct3D9::IDirect3DDevice9;
 
 pub use d3d9_hook_core::Callbacks;
+pub use overlay_types::*;
 pub mod logger;
+
 
 pub static OVERLAY_RUNTIME: OnceLock<Mutex<UiManager>> = OnceLock::new();
 static EGUI_RENDERER: OnceLock<Mutex<egui_backend::EguiDx9Lite>> = OnceLock::new();
@@ -37,14 +38,17 @@ static FOCUS_HWND: OnceLock<SyncHWND> = OnceLock::new();
 /// Overlay controller that owns custom_windows windows and talks to portal2-sdk.
 pub struct UiManager {
     windows: Vec<Box<dyn custom_windows::Window + Send>>,
-    engine_instance: &'static portal2_sdk::Engine, // todo: fcking workaround, because i need global engine for custom windows, and IM LAZY CHANGE ARCHITECTURE!
+    engine_instance: &'static portal2_sdk::Engine,
     input_context: Option<SendableContext>,
+
     cursor_visible_in_gui: bool,
     egui_wants_keyboard: bool,
     egui_wants_pointer: bool,
+    is_inspecting: bool,
 
-    pub shared_state: custom_windows::SharedState,
-    pub is_focused: bool,
+    state_action_rx: mpsc::Receiver<SharedStateAction>,
+    shared_state: custom_windows::SharedState,
+    event_receiver: mpsc::Receiver<events::OverlayEvent>,
 }
 
 pub struct SendableContext(pub *mut portal2_sdk::input_system::InputContextT);
@@ -52,22 +56,95 @@ unsafe impl Send for SendableContext {}
 
 impl UiManager {
     pub fn new(engine_instance: &'static portal2_sdk::Engine) -> Self {
+        // Initialize the global event bus
+        let (sender, receiver) = mpsc::channel();
+        events::EVENT_SENDER.set(sender).unwrap();
+
+        // Pass the fresh state to your custom_windows crate to register everything
+        let mut shared_state = SharedState::default();
+        let (ss_tx, ss_rx) = mpsc::channel();
+        let windows = custom_windows::regist(engine_instance, &mut shared_state);
+        let _ = custom_windows::STATE_ACTION_TX.set(ss_tx);
+
         Self {
-            windows: custom_windows::regist_windows(&engine_instance),
-            shared_state: custom_windows::SharedState::default(),
+            windows,
+            shared_state,
             engine_instance,
-            is_focused: false,
             cursor_visible_in_gui: false,
             input_context: None,
             egui_wants_keyboard: false,
             egui_wants_pointer: false,
+            is_inspecting: false,
+            event_receiver: receiver,
+            state_action_rx: ss_rx,
         }
     }
 
-    pub(crate) fn draw_ui(&mut self, ctx: &egui::Context) {
-        use custom_windows::BASE_TEXT_SCALE;
+    pub(crate) fn handle_state_editing(&mut self) {
+        while let Ok(action) = self.state_action_rx.try_recv() {
+            action(&mut self.shared_state)
+        }
+    }
 
+    pub(crate) fn handle_events(&mut self) {
+        // Process Event Bus
+        let events: Vec<OverlayEvent> = self.event_receiver.try_iter().collect();
+
+        for event in events.iter() {
+            // Framework-level event handling
+            match event {
+                events::OverlayEvent::ToggleOverlay => {
+                    self.shared_state.is_overlay_focused ^= true;
+                    self.is_inspecting = false;
+                },
+                events::OverlayEvent::SetOverlayFocus(state) => {
+                    self.shared_state.is_overlay_focused = *state;
+                    self.is_inspecting = false;
+                }
+
+                events::OverlayEvent::ToggleWindow(name) => {
+                    if let Some(win) = self.windows.iter_mut().find(|w| w.name() == *name) {
+                        let state = win.is_open();
+                        win.set_open(!state);
+                    } else {
+                        log::warn!("Unknown window for ToggleWindow event: {}", name);
+                    }
+                }
+                events::OverlayEvent::SetWindowState(name, open) => {
+                    if let Some(win) = self.windows.iter_mut().find(|w| w.name() == *name) {
+                        win.set_open(*open);
+                    } else {
+                        log::warn!("Unknown window for SetWindowState event: {}", name);
+                    }
+                },
+                events::OverlayEvent::CloseAllWindows => {
+                    for win in self.windows.iter_mut() { win.set_open(false); }
+                }
+                events::OverlayEvent::OpenAllWindows => {
+                    for win in self.windows.iter_mut() { win.set_open(true); }
+                },
+
+                events::OverlayEvent::EngineCommand(cmd) => {
+                    self.engine_instance.client().execute_client_cmd_unrestricted(&cmd);
+                },
+
+                events::OverlayEvent::PressKey(key_code) => {
+                    self.shared_state.hotkeys.fire_bind(key_code);
+                },
+                _ => {}
+            }
+
+            // Route events to windows
+            for window in self.windows.iter_mut() {
+                window.on_event(&event, &mut self.shared_state);
+            }
+        }
+    }
+
+
+    pub(crate) fn draw_ui(&mut self, ctx: &egui::Context) {
         // Apply zoom factor to text styles
+        use custom_windows::BASE_TEXT_SCALE;
         let zoom = ctx.zoom_factor();
         let mut style = (*ctx.style()).clone();
         style.text_styles = [
@@ -79,10 +156,18 @@ impl UiManager {
         ].into();
         ctx.set_style(style);
 
+        // Draw Windows
         for window in self.windows.iter_mut() {
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new(window.name()), window.is_open()));
+
             if window.is_open() && window.is_should_render(&self.shared_state, &self.engine_instance) {
                 window.draw(ctx, &mut self.shared_state, &self.engine_instance);
             }
+        }
+
+        // Draw Toasts
+        if let Ok(mut toasts) = toasts::TOASTS.try_lock() {
+            toasts.show(ctx);
         }
 
         self.egui_wants_keyboard = ctx.wants_keyboard_input();
@@ -91,14 +176,32 @@ impl UiManager {
 
     /// Raw input routing. Returns true to pass input to the game, false to consume.
     pub fn on_input(&mut self, umsg: u32, wparam: WPARAM, _lparam: LPARAM) -> bool {
-        use windows::Win32::UI::Input::KeyboardAndMouse::VK_F3;
 
-        if matches!(umsg, WM_KEYUP | WM_SYSKEYDOWN) && wparam.0 as u16 == VK_F3.0 {
-            self.is_focused = !self.is_focused;
-            self.shared_state.is_overlay_focused = self.is_focused;
+        let mut should_pass_to_game = true;
+        if umsg == WM_KEYUP {
+            let keycode = KeyCode::from_winapi(wparam.0 as u16);
+            let keybinds = &self.shared_state.hotkeys.binds;
+            if let Some((event, pass_to_game)) = keybinds.get(&keycode) {
+                events::push_event(event.clone());
+                should_pass_to_game = *pass_to_game;
+            }
         }
 
-        let ui_demands_cursor = self.is_focused || self.egui_wants_pointer;
+        let is_focused = self.shared_state.is_overlay_focused;
+
+        // Handle inspect mode
+        if self.shared_state.allow_inspect_mode && is_focused {
+            if umsg == WM_RBUTTONDOWN && !self.egui_wants_pointer {
+                self.is_inspecting = true;
+            } else if umsg == WM_RBUTTONUP {
+                self.is_inspecting = false;
+            }
+        } else {
+            self.is_inspecting = false;
+        }
+
+        let ui_demands_cursor = (is_focused && !self.is_inspecting) || self.egui_wants_pointer;
+
         if ui_demands_cursor != self.cursor_visible_in_gui {
             let input_stack_system = self.engine_instance.input_stack_system();
 
@@ -109,23 +212,15 @@ impl UiManager {
             let ctx = self.input_context.as_ref().unwrap().0;
 
             if ui_demands_cursor {
-                log::debug!("Grabbing input from game.");
+                // log::debug!("Grabbing input from game.");
                 input_stack_system.enable_input_context(ctx, true);
                 input_stack_system.set_cursor_visible(ctx, false);
                 input_stack_system.set_mouse_capture(ctx, true);
             } else {
-                log::debug!("Releasing mouse to game.");
+                // log::debug!("Releasing mouse to game.");
                 input_stack_system.enable_input_context(ctx, false);
             }
             self.cursor_visible_in_gui = ui_demands_cursor;
-        }
-
-        let mut should_pass_to_game = true;
-        for win in self.windows.iter_mut() {
-            if !win.on_raw_input(umsg, wparam.0 as u16) {
-                log::debug!("Raw input handled by window '{}'. Not passing to game", win.name());
-                should_pass_to_game = false;
-            }
         }
 
         if !should_pass_to_game {
@@ -138,12 +233,18 @@ impl UiManager {
             | WM_LBUTTONDBLCLK | WM_RBUTTONDBLCLK | WM_MBUTTONDBLCLK | WM_XBUTTONDBLCLK
             | WM_MBUTTONDOWN | WM_MBUTTONUP | WM_MOUSEWHEEL | WM_INPUT
         );
-        if is_mouse_msg && (self.is_focused || self.egui_wants_pointer) {
+        let is_keyboard_msg = matches!(umsg, WM_KEYUP | WM_KEYDOWN | WM_SYSKEYDOWN | WM_SYSKEYUP | WM_CHAR);
+
+        if self.is_inspecting {
+            return umsg == WM_INPUT || is_keyboard_msg;
+        }
+
+        if is_mouse_msg && (is_focused || self.egui_wants_pointer) {
             return false;
         }
 
-        let is_keyboard_msg = matches!(umsg, WM_KEYUP | WM_KEYDOWN | WM_SYSKEYDOWN | WM_SYSKEYUP | WM_CHAR);
-        if is_keyboard_msg && ((self.egui_wants_keyboard && self.egui_wants_pointer) || self.is_focused) {
+        let is_key_down = matches!(umsg, WM_KEYDOWN | WM_SYSKEYDOWN | WM_CHAR);
+        if is_key_down && ((self.egui_wants_keyboard && self.egui_wants_pointer) || is_focused) {
             return false;
         }
 
@@ -151,6 +252,26 @@ impl UiManager {
     }
 }
 
+fn initialize_engine_and_app() {
+    match portal2_sdk::Engine::initialize() {
+        Ok(instance_ref) => {
+            if OVERLAY_RUNTIME.set(Mutex::new(UiManager::new(instance_ref))).is_err() {
+                log::error!("UiManager was already initialized! This is a bug.");
+            }
+        }
+        Err(err) => {
+            log::error!("Failed to initialize engine interfaces: {}", err);
+            unsafe {
+                MessageBoxA(
+                    None,
+                    PCSTR(b"Failed to initialize engine interfaces! The overlay will not work.\0".as_ptr()),
+                    PCSTR(b"Initialization Error\0".as_ptr()),
+                    MB_ICONERROR,
+                );
+            }
+        }
+    }
+}
 
 /// Called by d3d9_hook_core on first valid device.
 pub fn on_device_created(hwnd: HWND, device: &IDirect3DDevice9) {
@@ -158,33 +279,11 @@ pub fn on_device_created(hwnd: HWND, device: &IDirect3DDevice9) {
     INIT.call_once(|| {
         let _ = FOCUS_HWND.set(SyncHWND(hwnd));
 
+        initialize_engine_and_app();
+
         let renderer = egui_backend::EguiDx9Lite::init(device, hwnd, false);
         if EGUI_RENDERER.set(Mutex::new(renderer)).is_err() {
             log::warn!("Egui renderer already initialized!");
-        }
-
-        let engine_instance = match portal2_sdk::Engine::initialize() {
-            Ok(instance) => instance,
-            Err(err) => {
-                log::error!("Failed to initialize engine interfaces: {}", err);
-                unsafe {
-                    MessageBoxA(
-                        None,
-                        PCSTR(b"Failed to initialize engine interfaces! The overlay will not work.\0".as_ptr()),
-                        PCSTR(b"Initialization Error\0".as_ptr()),
-                        MB_ICONERROR,
-                    );
-                }
-                return;
-            }
-        };
-
-        if custom_windows::ENGINE.set(engine_instance).is_err() {
-            unreachable!()
-        }
-
-        if OVERLAY_RUNTIME.set(Mutex::new(UiManager::new(custom_windows::ENGINE.get().unwrap()))).is_err() {
-            unreachable!()
         }
 
         unsafe {
@@ -204,6 +303,8 @@ pub fn on_present(device: &IDirect3DDevice9) {
             renderer.present(device, |ctx| {
                 if let Some(app) = OVERLAY_RUNTIME.get() {
                     if let Ok(mut app) = app.lock() {
+                        app.handle_events();
+                        app.handle_state_editing();
                         app.draw_ui(ctx);
                     }
                 }
@@ -305,7 +406,7 @@ pub fn recording_restart() {
             }
 
             // todo: a shitty workaround for now
-            let engine = custom_windows::ENGINE.get().unwrap();
+            let engine = portal2_sdk::get_engine();
             let game_resolution = engine.client().get_screen_size();
             let rec_res = recorder::calc_aligned_resolution(game_resolution.0 as u32, game_resolution.1 as u32);
 
@@ -341,7 +442,8 @@ pub static CALLBACKS: Callbacks = Callbacks {
 /// Safe to call multiple times; no-op if nothing to restore.
 pub fn uninstall_overlay() {
     if let Some(app_mutex) = OVERLAY_RUNTIME.get() {
-        if let Ok(app) = app_mutex.try_lock() {
+        if let Ok(mut app) = app_mutex.try_lock() {
+            std::mem::take(&mut app.windows).into_iter().for_each(drop);
             app.engine_instance.game_event_manager().shutdown_all_listeners();
         }
     }
