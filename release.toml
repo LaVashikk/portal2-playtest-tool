@@ -24,8 +24,8 @@ enabled = true
 crate_name = "injector_server_plugin"
 archive_name = "server_plugin.zip"
 files = [
-    { source = "$DLL", destination = "portal2/addons/playtest_assistant.dll" },
-    { source = "assets/survey.vdf", destination = "portal2/addons/overlay.vdf" },
+    { source = "$DLL", destination = "portal2/addons/playtest_assistant_plugin.dll" },
+    { source = "assets/survey.vdf", destination = "portal2/addons/survey.vdf" },
     { source = "assets/ffmpeg.exe", destination = "portal2/addons/ffmpeg.exe" },
     { source = "assets/survey", destination = "portal2/addons/survey" },
     { source = "LICENSE", destination = "portal2/addons/LICENSE-PLAYTEST-TOOL" },

@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.0] - 2026-07-09
+
+### Added
+- **Dedicated Playtest Console Commands (`survey_open_ui` & `survey_open_bug_report`):** Replaced the legacy `open_survey` variable with two explicit, highly ergonomic `ConCommand` commands registered via `portal2-sdk`:
+  - `survey_open_ui <0 | 1 | config_path>`: Opens, closes (`0`), or loads a custom survey configuration file (`1` for `default`). 
+  - `survey_open_bug_report`: Instantly opens the dedicated Bug Report UI window
+- **In-Game Developer Console Feedback (`~`):** Survey and bug report actions now print direct, colored status updates inside the Portal 2 developer console via native `ICvar` methods.
+- **Structured Toast & Console Logging:** Implemented dual-backend logging for the playtest runtime: general application logs (`logger::game_console`) are forwarded directly to the `~` console, while warnings and submission/upload errors (`logger::to_toasts`) trigger non-intrusive in-game UI toasts.
+
+### Changed
+- **Command Interface Overhaul:** Removed the old `open_survey` CVar in favor of dedicated `survey_open_ui` and `survey_open_bug_report` commands.
+- **Clean API & Boilerplate Elimination:** Removed obsolete code, legacy workarounds, and outdated UI boilerplate across `custom_windows` to strictly follow the modern event-driven P2RO API.
+
+## [0.2.0] - 2026-07-05
+
+### Added
+- **Software Video Recording Fallback:** Added automatic software encoding fallback (`--no-hw-encoder` verification) when hardware FFmpeg encoding fails during playtest video captures (`97381f2`).
+- **Updated Survey Configs:** Renamed the default overlay configuration file from `overlay.vdf` to `survey.vdf` and updated release asset bundling (`release.toml`) (`c1f66cc`).
+
 ## [0.1.2] - 2026-07-04
 
 ### Fixed

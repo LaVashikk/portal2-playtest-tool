@@ -144,7 +144,7 @@ pub unsafe fn install_on_d3d9(d3d9: *mut IDirect3D9, cb: &'static Callbacks) -> 
     .ok()
     .expect("VirtualProtect failed for CreateDevice entry");
 
-    create_device_fn_ptr_location.write(hooked_create_device as usize);
+    create_device_fn_ptr_location.write(hooked_create_device as *const () as usize);
 
     VirtualProtect(
         create_device_fn_ptr_location as _,
@@ -541,7 +541,7 @@ unsafe fn install_device_hooks(device: &IDirect3DDevice9) {
     let reset_entry = (vtable_ptr + 16 * std::mem::size_of::<usize>()) as *mut usize;
     if !st.reset_installed {
         st.o_reset = Some(std::mem::transmute(reset_entry.read()));
-        patch_vtable_entry(reset_entry, hooked_reset as usize);
+        patch_vtable_entry(reset_entry, hooked_reset as *const () as usize);
         st.reset_installed = true;
     }
 
@@ -549,7 +549,7 @@ unsafe fn install_device_hooks(device: &IDirect3DDevice9) {
     let present_entry = (vtable_ptr + 17 * std::mem::size_of::<usize>()) as *mut usize;
     if !st.present_installed {
         st.o_present = Some(std::mem::transmute(present_entry.read()));
-        patch_vtable_entry(present_entry, hooked_present as usize);
+        patch_vtable_entry(present_entry, hooked_present as *const () as usize);
         st.present_installed = true;
     }
 }
@@ -633,6 +633,8 @@ pub fn uninstall() -> bool {
         st.device = None;
         st.hwnd = None;
         st.device_notified = false;
+
+        // !!!TODO: engine CVARs clear
 
         restored_any
     }

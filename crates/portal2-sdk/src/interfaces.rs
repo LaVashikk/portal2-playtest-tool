@@ -71,3 +71,37 @@ pub unsafe fn find_interface<T>(
     // The caller will then cast it to a specific interface struct like `IVEngineClient`.
     interface_ptr as *mut T
 }
+
+/// Finds an exported function or symbol by exact name in a specified module (`DLL`).
+///
+/// Unlike `find_interface`, which queries C++ interface objects via `CreateInterface`,
+/// `find_export` directly extracts standalone exported C/C++ functions from a module's export table.
+///
+/// # Arguments
+///
+/// * `module_name` - The null-terminated name of the DLL to search inside (e.g., `b"tier0.dll\0"`).
+/// * `symbol_name` - The null-terminated exact name or MSVC mangled symbol of the function (e.g., `b"Msg\0"`).
+///
+/// # Returns
+///
+/// * `Some(FARPROC)` - A raw function pointer to the exported symbol if found.
+/// * `None` - If the module handle is invalid or the symbol does not exist in the export table.
+///
+/// # Safety
+///
+/// This function calls unsafe Win32 APIs (`GetModuleHandleA` and `GetProcAddress`).
+/// The caller is responsible for safely transmuting the returned `FARPROC` into the correct function pointer signature.
+pub unsafe fn find_export(
+    module_name: &'static [u8],
+    symbol_name: &'static [u8],
+) -> windows::Win32::Foundation::FARPROC {
+    let module_pcstr = PCSTR(module_name.as_ptr());
+    let symbol_pcstr = PCSTR(symbol_name.as_ptr());
+
+    let module_handle = match unsafe { GetModuleHandleA(module_pcstr) } {
+        Ok(handle) if !handle.is_invalid() => handle,
+        _ => return None,
+    };
+
+    unsafe { GetProcAddress(module_handle, symbol_pcstr) }
+}

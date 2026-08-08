@@ -145,15 +145,15 @@ You can open survey windows using a console command, which can be fired:
 The default survey is typically defined in `addons/survey/default.json`.
 
 ```
-open_survey 1
+survey_open_ui 1
 ```
 
 #### Open a custom survey file
 
 ```
-open_survey your_custom_survey
-open_survey your_custom_survey.json
-open_survey survey/your_custom_survey.json
+survey_open_ui your_custom_survey
+survey_open_ui your_custom_survey.json
+survey_open_ui survey/your_custom_survey.json
 ```
 
 **Important constraints:** The JSON file must exist under:
@@ -165,7 +165,7 @@ open_survey survey/your_custom_survey.json
 
 1. Place your custom survey file under `addons/survey/`.
 2. Validate the JSON via any online JSON validator.
-3. Test the survey by running `open_survey survey/your_file` manually in the console.
+3. Test the survey by running `survey_open_ui survey/your_file` manually in the console.
 4. Only then hook the command up to map triggers.
 
 ## Survey Configuration Format
@@ -343,7 +343,7 @@ Numeric rating question from 1 to 10, with labels at the ends.
 3. Validate the JSON (no trailing commas, proper quotes, etc.).
 4. In-game, open it via:
    ```
-   open_survey survey/chapter1_intro.json
+   survey_open_ui survey/chapter1_intro.json
    ```
 
 **Tips:**

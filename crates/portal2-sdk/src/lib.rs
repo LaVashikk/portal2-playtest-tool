@@ -86,6 +86,7 @@ pub mod input_system;
 pub mod game_events;
 pub mod engine_trace;
 pub mod debug_overlay;
+pub mod tier0;
 
 pub use crate::entities::Entities;
 use crate::input_system::IInputStackSystem;
@@ -96,6 +97,7 @@ pub use cvar::{ICvar, CvarFlags, ConVar, ConVarBuilder, ConCommand, ConCommandBu
 pub use game_events::IGameEventManager2;
 pub use engine_trace::IEngineTrace;
 pub use debug_overlay::IVDebugOverlay;
+pub use tier0::{msg, con_color_msg, warning};
 
 pub static ENGINE: OnceLock<Engine> = OnceLock::new();
 
@@ -556,11 +558,25 @@ impl Engine {
     }
 }
 
+/// Prints a raw string directly to the in-game developer console (`~`).
+pub fn console_print(msg: &str) {
+    if let Some(engine) = ENGINE.get() {
+        engine.cvar_system().console_print(msg);
+    }
+}
+
+/// Prints a raw colored (`RGBA`) string directly to the in-game developer console (`~`).
+pub fn console_color_print(color: Color, msg: &str) {
+    if let Some(engine) = ENGINE.get() {
+        engine.cvar_system().console_color_print(color, msg);
+    }
+}
+
 /// Prints a formatted message directly to the in-game developer console (`~`).
 #[macro_export]
 macro_rules! con_print {
     ($($arg:tt)*) => {
-        $crate::console_print(&std::format!($($arg)*))
+        $crate::msg(&std::format!($($arg)*))
     };
 }
 
@@ -579,20 +595,24 @@ macro_rules! con_print {
 #[macro_export]
 macro_rules! con_color_print {
     ($color:expr, $($arg:tt)*) => {
-        $crate::console_color_print($color, &std::format!($($arg)*))
+        $crate::con_color_msg($color, &std::format!($($arg)*))
     };
 }
 
-/// Prints a raw string directly to the in-game developer console (`~`).
-pub fn console_print(msg: &str) {
-    if let Some(engine) = ENGINE.get() {
-        engine.cvar_system().console_print(msg);
-    }
-}
-
-/// Prints a raw colored (`RGBA`) string directly to the in-game developer console (`~`).
-pub fn console_color_print(color: Color, msg: &str) {
-    if let Some(engine) = ENGINE.get() {
-        engine.cvar_system().console_color_print(color, msg);
-    }
+/// Sends a formatted warning message via `tier0.dll` (`Warning`).
+///
+/// Recorded into `con_logfile`, triggers warning spew handlers, and appears in the developer console.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use portal2_sdk::warning;
+///
+/// warning!("Config file {} missing or corrupted!\n", "settings.json");
+/// ```
+#[macro_export]
+macro_rules! warning {
+    ($($arg:tt)*) => {
+        $crate::warning(&std::format!($($arg)*))
+    };
 }
